@@ -50,7 +50,7 @@ dev = [
 
 [project.urls]
 Homepage = "https://forge.thatserver.ca/agreengrass/salt-pepper"
-Source = "https://github.com/saltstack/pepper"
+Source = "https://forge.thatserver.ca/agreengrass/salt-pepper"
 
 [project.scripts]
 pepper = "salt_pepper.script:main"

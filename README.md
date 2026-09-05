@@ -6,7 +6,35 @@ hasn't been updated in **8 years** (last meaningful commit ~2018).
 Pepper provides a Python library (`pepperlib`) and CLI script for accessing a
 remote `salt-api` instance without needing Salt installed locally.
 
-## The Problem
+## Quick Start
+
+### Install from release
+
+```bash
+# Via pip from release artifact (no git needed)
+pip install https://forge.thatserver.ca/agreengrass/salt-pepper/releases/download/v4.0.0/salt_pepper-4.0.0-py3-none-any.whl
+
+# Or via git
+pip install git+ssh://git@forge.thatserver.ca:8222/agreengrass/salt-pepper.git@v4.0.0
+
+# Or from source
+cd salt-pepper
+pip install .
+```
+
+### First use
+
+```bash
+# Interactive — pepper prompts for username/password
+pepper '*' test.ping
+
+# Non-interactive via env vars
+export SALTAPI_URL=https://salt.example.com:8080
+export SALTAPI_USER=admin
+export SALTAPI_PASS=hunter2
+export SALTAPI_EAUTH=pam
+pepper --non-interactive '*' test.ping
+```
 
 The original pepper (`saltstack/pepper`) is frozen in time:
 
@@ -20,7 +48,42 @@ The original pepper (`saltstack/pepper`) is frozen in time:
 - **No async support** — everything synchronous
 - **Salt 3000+ API features** — missing support for clients and parameters added since 2018
 
-## What the Original Pepper Supports
+## Backends
+
+salt-pepper supports multiple salt-api backends, selectable via `--backend` or config.
+
+| Backend | Port | Auth Method | Notes |
+|---------|------|-------------|-------|
+| `cherrypy` (default) | 8080 | Session cookie (PAM login) | Standard Salt rest_cherrypy |
+| `alcali` | 8443 | JWT Bearer token | Django REST API frontend |
+
+```bash
+# CherryPy backend (default)
+pepper '*' test.ping
+
+# Alcali backend
+pepper --backend alcali '*' test.ping
+
+# Set in config file (~/.pepperrc.yml)
+# main:
+#   backend: alcali
+#   saltapi_url: https://salt.example.com:8443
+```
+
+### Auth internals (why v4.0.0 matters)
+
+Salt's `rest_cherrypy` authenticates via **session cookies**, not `X-Auth-Token` headers.
+The original pepper extracted the token from login and sent it as `X-Auth-Token` on every
+subsequent request — but CherryPy ignores that header and returns 401.
+
+**v4.0.0 fix**: `requests.Session()` automatically stores the `session_id` cookie from
+the `/login` response and sends it on every follow-up request. No manual token
+extraction needed. This is transparent — just authenticate normally.
+
+For `rest_tornado` (JWT mode), `X-Auth-Token` is still used — that backend follows a
+different protocol.
+
+## Clients & Features
 
 | Client | Method | Notes |
 |--------|--------|-------|
@@ -29,50 +92,35 @@ The original pepper (`saltstack/pepper`) is frozen in time:
 | `local_batch` | `Pepper.local_batch()` | ✅ Batch execution |
 | `runner` | `Pepper.runner()` | ✅ Runner functions |
 | `wheel` | `Pepper.wheel()` | ✅ Wheel functions |
-| `ssh` | CLI only | ❌ No `Pepper.ssh()` method |
-| `queue` | — | ❌ Not implemented |
+| `ssh` | `Pepper.ssh()` | ✅ SSH client method |
+| `queue` | `Pepper.queue()` | ✅ Queue client |
 
 | Feature | Status |
 |---------|--------|
-| Auth: PAM, `auto`, kerberos | ✅ |
-| Token-based auth (`/token` + `/run`) | ✅ |
-| Config: `.pepperrc`, env vars, CLI flags | ✅ |
+| Auth: PAM, auto, kerberos, JWT | ✅ |
+| Backends: cherrypy (session cookie), alcali (JWT Bearer) | ✅ |
+| Config: YAML profiles, INI, env vars, CLI flags | ✅ |
+| Profile selection (`--profile`, `PEPPERPROFILE`) | ✅ |
 | Targeting: glob, pcre, list, grain, grain_pcre, pillar, pillar_pcre, range, compound, nodegroup | ✅ |
 | `--json` / `--json-file` input | ✅ |
 | Retcode validation (`--fail-any`, `--fail-all`, etc.) | ✅ |
-| Outputters (via salt module) | ✅ (requires `salt` installed) |
+| Output formatting without Salt (JSON, YAML, table, nested) | ✅ |
+| Subcommands (`run`, `key`, `event`, `job`) | ✅ |
+| Event streaming CLI | ✅ |
+| Shell completions | ✅ |
+| Rich error output with context | ✅ |
+| Async library interface (`AsyncPepper` via httpx) | ✅ |
+| Type hints (mypy checked) | ✅ |
+| Ruff linting | ✅ |
+| Unit test suite (mocked HTTP) | ✅ |
+| Forgejo Actions CI | ✅ |
 
-## What's Missing (New Features Needed)
+## Roadmap — Future
 
-### CLI & Library
-
-1. **`queue` client** — Salt has a `queue` runner that pepper can't drive
-2. **`ssh` method** — CLI parses SSH commands but library has no `Pepper.ssh()`
-3. **Proper `argparse` or `click`** — replace deprecated `optparse`
-4. **Strip Python 2 compat** — Python 2 is EOL, remove all shims
-5. **Single HTTP backend** — use `requests` exclusively, drop `urllib2`
-6. **Async** — `async` / `await` via `httpx` or `aiohttp` for the library; optional parallel execution polling
-7. **Type hints everywhere** — full `pyproject.toml` with mypy, ruff
-8. **`tgt_type` alias** — Salt added `tgt_type` as the successor to `expr_form`; support both
-9. **Metadata parameter** — `metadata` dict in lowstate calls
-10. **JID subscription** — `--client local --async` with proper job tracking (Salt modern versions)
-11. **`full_return` toggle** — baked into modern Salt-api, don't force it
-12. **Modern packaging** — `pyproject.toml`, hatchling/setuptools, remove `setup.py`
-13. **Better error messages** — current errors are terse and low-context
-14. **Output formatting without Salt** — clean `--out=json|yaml|table` without requiring `salt` at all
-
-### Auth
-
-15. **JWT auth support** — Salt 3006+ supports JWT tokens via `rest_tornado`
-16. **OAuth2 / OpenID Connect** — for enterprise deployments
-
-### Operations
-
-17. **CI via Forgejo Actions** — working CI pipeline instead of Travis/Azure
-18. **Unit tests with mocked HTTP** — current tests are integration-only
-19. **Timeout per-command** — work properly with all client types (currently only local and runner)
-20. **Configurable output file per-run** — extend `--output-file`
-21. **Subcommands** — `pepper run`, `pepper key`, `pepper event`, `pepper job` instead of only `--client`
+- Release automation (auto-build on tag push)
+- OpenID Connect / OAuth2 auth providers
+- `full_return` toggle baked into library calls
+- Timeout per-command for all client types
 
 ## Project Structure
 
@@ -127,9 +175,10 @@ safe.
 
 Secrets are resolved in this order (highest priority first):
 
-1. **CLI flags** (`--username`, `--password`, `--jwt`)
-2. **Environment variables** (`SALTAPI_USER`, `SALTAPI_PASS`, `SALTAPI_URL`, `SALTAPI_EAUTH`)
-3. **Config file** (`~/.pepperrc.yml` or `~/.pepperrc`)
+1. **CLI flags** (`--username`, `--password`, `--jwt`, `--backend`)
+2. **Environment variables** (`SALTAPI_USER`, `SALTAPI_PASS`, `SALTAPI_URL`,
+   `SALTAPI_EAUTH`, `PEPPER_BACKEND`)
+3. **Config file** (`~/.pepperrc.yml` or `~/.pepperrc`, selected by `PEPPERPROFILE`)
 
 ### Methods
 
@@ -164,20 +213,30 @@ the environment is scoped to a single process tree.
 #### 3. YAML config file (`~/.pepperrc.yml`)
 
 ```yaml
+# Default profile (cherrypy backend)
 main:
-  saltapi_url: https://salt.example.com:8000
+  saltapi_url: https://salt.example.com:8080
   saltapi_user: admin
   saltapi_eauth: pam
+  backend: cherrypy
 
+# Prod profile with Alcali backend
 prod:
-  saltapi_url: https://salt-prod.example.com:8000
+  saltapi_url: https://salt-prod.example.com:8443
   saltapi_user: deploy
   saltapi_eauth: auto
+  backend: alcali
+  # Pre-set JWT token (avoid storing this in shared configs)
+  jwt_token: eyJhbGciOi...
+
+# Legacy INI-style config still works
 ```
 
-Use with:
+Use with profile selection:
 ```bash
 pepper -p prod '*' test.ping
+# Or via env var
+PEPPERPROFILE=prod pepper '*' test.ping
 ```
 
 **Security**: The config file is a plaintext file in your home directory.
@@ -188,7 +247,19 @@ environment variables or the interactive prompt instead.
 Config files are optional and backward-compatible — old `.pepperrc` INI
 files still work.
 
-#### 4. Token caching (`--make-token`)
+#### 4. Profile-based config with environment override
+
+Set a default profile in your shell init:
+
+```bash
+export PEPPERPROFILE=prod
+export PEPPER_BACKEND=alcali
+pepper '*' test.ping
+```
+
+CLI `--profile` flag takes precedence over `PEPPERPROFILE`.
+
+#### 5. Token caching (`--make-token`)
 
 ```bash
 pepper -T '*' test.ping     # login once, token cached to ~/.peppercache
