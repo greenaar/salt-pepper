@@ -212,40 +212,162 @@ the environment is scoped to a single process tree.
 
 #### 3. YAML config file (`~/.pepperrc.yml`)
 
+The config file supports multiple named **profiles**, each containing connection
+settings for a different Salt master or backend. Profiles are selected with the
+`--profile` / `-p` flag or the `PEPPERPROFILE` environment variable.
+
+##### CherryPy backend (standard salt-api)
+
 ```yaml
-# Default profile (cherrypy backend)
+# ~/.pepperrc.yml — CherryPy backend on port 8080
+# Profile name: 'main' (default when no --profile is given)
 main:
   saltapi_url: https://salt.example.com:8080
   saltapi_user: admin
+  saltapi_pass: your_password_here
+  saltapi_eauth: pam
+  backend: cherrypy
+  # Optional: pre-authenticate with a session token
+  # (pepper will re-auth automatically if this expires)
+  # jwt_token: eyJ...
+
+# Named profile for a different master
+production:
+  saltapi_url: https://salt-prod.internal:8080
+  saltapi_user: deploy-bot
+  saltapi_pass: s3cr3t!
+  saltapi_eauth: pam
+  backend: cherrypy
+```
+
+Usage:
+```bash
+# Uses 'main' profile by default
+pepper '*' test.ping
+
+# Select a named profile
+pepper -p production '*' test.ping
+
+# Environment override — PEPPERPROFILE=production
+```
+
+##### Alcali backend (Django REST API / JWT)
+
+```yaml
+# ~/.pepperrc.yml — Alcali backend on port 8443
+# Connects to the Alcali Django app which proxies to salt-api
+alcali-dev:
+  saltapi_url: https://salt.example.com:8443
+  saltapi_user: admin
+  saltapi_pass: alcali_password
+  saltapi_eauth: pam
+  backend: alcali
+
+# Alcali with a pre-obtained JWT token (no login needed)
+alcali-token:
+  saltapi_url: https://salt.example.com:8443
+  backend: alcali
+  jwt_token: eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9...
+```
+
+Usage:
+```bash
+# Alcali with password login
+pepper -p alcali-dev --non-interactive '*' test.ping
+
+# Alcali with pre-set JWT token
+pepper -p alcali-token '*' test.ping
+```
+
+##### Mixed backends, one config file
+
+```yaml
+# Profile 'main' — cherrypy (default)
+main:
+  saltapi_url: https://salt.example.com:8080
+  saltapi_user: devops
+  saltapi_pass: hunter2
   saltapi_eauth: pam
   backend: cherrypy
 
-# Prod profile with Alcali backend
+# Profile 'prod' — different master, cherrypy
 prod:
-  saltapi_url: https://salt-prod.example.com:8443
-  saltapi_user: deploy
-  saltapi_eauth: auto
+  saltapi_url: https://salt-prod.internal.lan:8080
+  saltapi_user: deploy-bot
+  saltapi_pass: prod_s3cr3t
+  saltapi_eauth: pam
+  backend: cherrypy
+
+# Profile 'alcali' — Django REST API with JWT
+alcali:
+  saltapi_url: https://salt.example.com:8443
+  saltapi_user: admin
+  saltapi_pass: alcali_pw
+  saltapi_eauth: pam
   backend: alcali
-  # Pre-set JWT token (avoid storing this in shared configs)
-  jwt_token: eyJhbGciOi...
 
-# Legacy INI-style config still works
+# Profile 'alcali-token' — no password, just a JWT
+alcali-token:
+  saltapi_url: https://salt.example.com:8443
+  backend: alcali
+  jwt_token: eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9...
+
+# Profile 'legacy' — old INI-style still supported
 ```
 
-Use with profile selection:
+Switch between them:
 ```bash
+# Default profile (cherrypy)
+pepper '*' test.ping
+
+# Production (different master)
 pepper -p prod '*' test.ping
-# Or via env var
-PEPPERPROFILE=prod pepper '*' test.ping
+
+# Alcali Django API (JWT login)
+pepper -p alcali '*' test.ping
+
+# Alcali with pre-set token (no login)
+pepper -p alcali-token '*' test.ping
 ```
 
-**Security**: The config file is a plaintext file in your home directory.
-Protect it with `chmod 600 ~/.pepperrc.yml`. Do not commit it to version
-control. Never store production passwords in config files — use
-environment variables or the interactive prompt instead.
+##### Environment variable reference
 
-Config files are optional and backward-compatible — old `.pepperrc` INI
-files still work.
+| Variable | Maps to | Example |
+|----------|---------|--------|
+| `SALTAPI_URL` | `saltapi_url` | `https://salt:8080` |
+| `SALTAPI_USER` | `saltapi_user` | `admin` |
+| `SALTAPI_PASS` | `saltapi_pass` | `hunter2` |
+| `SALTAPI_EAUTH` | `saltapi_eauth` | `pam` |
+| `PEPPER_BACKEND` | `backend` | `cherrypy` or `alcali` |
+| `PEPPERPROFILE` | — (selects profile) | `prod` |
+
+##### Config file location and format
+
+Pepper looks for config in this order (first found wins):
+
+1. `./.pepperrc.yml` — project-local config (great for team repos, no passwords)
+2. `~/.pepperrc.yml` — user-wide config (default)
+3. `~/.pepperrc` — legacy INI format (still supported)
+
+**Security**: Protect your config file with `chmod 600 ~/.pepperrc.yml`.
+Never commit config files containing real passwords to version control.
+For CI/CD use environment variables instead of config files.
+
+##### Legacy INI format (backward compatible)
+
+```ini
+[main]
+saltapi_url = https://salt.example.com:8080
+saltapi_user = admin
+saltapi_pass = hunter2
+saltapi_eauth = pam
+
+[production]
+saltapi_url = https://salt-prod.internal:8080
+saltapi_user = deploy-bot
+saltapi_pass = s3cr3t!
+saltapi_eauth = pam
+```
 
 #### 4. Profile-based config with environment override
 
@@ -270,14 +392,15 @@ The cached token is stored in `~/.peppercache` with `0600` permissions.
 Tokens expire based on Salt master settings; pepper automatically
 refreshes them.
 
-#### 5. JWT tokens (`--jwt`)
+#### 6. JWT tokens (`--jwt`)
 
 ```bash
 pepper --jwt 'eyJhbGciOi...' '*' test.ping
 ```
 
-JWT is supported by Salt's `rest_tornado` module. The token is sent as
-`X-Auth-Token` on every request. No separate `/login` call is made.
+JWT is supported by Salt's `rest_tornado` module and also by the Alcali
+Django backend. The token is sent as `X-Auth-Token` or `Authorization: Bearer`
+depending on the backend. No separate `/login` call is made.
 
 ### What NOT to do
 
@@ -285,34 +408,6 @@ JWT is supported by Salt's `rest_tornado` module. The token is sent as
 - Do **not** pass passwords in CLI flags in shared/multi-user environments
   (they are visible in `/proc/pid/cmdline`)
 - Do **not** commit config files with passwords to git
-
-## Roadmap
-
-### Phase 1 — Modernize (minimal diffs)
-- [ ] `pyproject.toml` + modern packaging
-- [ ] Strip Python 2 compat
-- [ ] Replace `optparse` with `click`
-- [ ] Replace `urllib2` with `requests` throughout
-- [ ] Add type hints
-- [ ] Ruff lint + mypy type checking
-- [ ] Forgejo Actions CI
-- [ ] Unit test suite with mocked HTTP
-
-### Phase 2 — New Features
-- [x] `queue` client support
-- [x] `ssh` client method in library
-- [x] `tgt_type` alias + `metadata` parameter
-- [x] JWT auth support
-- [x] Async library interface (httpx-based `AsyncPepper`)
-- [x] Output formatting without Salt (native `--out=json|yaml|table`)
-- [x] `pepper job` subcommand (job status, log, kill)
-
-### Phase 3 — Polish
-- [x] Subcommand structure (`run`, `key`, `event`, `job`)
-- [x] Config file in YAML/TOML instead of INI
-- [x] Completions (shell auto-complete)
-- [x] Rich error output with context
-- [x] Event streaming CLI
 
 ## Related
 
