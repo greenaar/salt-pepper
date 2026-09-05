@@ -130,13 +130,13 @@ mypy src/
 - [ ] Unit test suite with mocked HTTP
 
 ### Phase 2 — New Features
-- [ ] `queue` client support
-- [ ] `ssh` client method in library
-- [ ] `tgt_type` alias + `metadata` parameter
-- [ ] JWT auth support
-- [ ] Async library interface
-- [ ] Output formatting without Salt (native `--out=json|yaml|table`)
-- [ ] `pepper job` subcommand (job status, log, kill)
+- [x] `queue` client support
+- [x] `ssh` client method in library
+- [x] `tgt_type` alias + `metadata` parameter
+- [x] JWT auth support
+- [x] Async library interface (httpx-based `AsyncPepper`)
+- [x] Output formatting without Salt (native `--out=json|yaml|table`)
+- [x] `pepper job` subcommand (job status, log, kill)
 
 ### Phase 3 — Polish
 - [ ] Subcommand structure (`run`, `key`, `event`, `job`)

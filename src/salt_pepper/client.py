@@ -16,6 +16,57 @@ from salt_pepper.exceptions import PepperException
 logger = logging.getLogger(__name__)
 
 
+def construct_url(api_url: str, path: str) -> str:
+    """
+    Build the full URL for a salt-api resource path.
+
+    Ensures exactly one slash between ``api_url`` and ``path``.
+    """
+    base = api_url.rstrip("/")
+    if not path.startswith("/"):
+        path = "/" + path
+    return base + path
+
+
+def make_lowstate(
+    client: str,
+    tgt: str,
+    fun: str,
+    arg: list | None = None,
+    kwarg: dict | None = None,
+    expr_form: str = "glob",
+    tgt_type: str | None = None,
+    timeout: int | None = None,
+    ret: str | None = None,
+    batch: str | None = None,
+    metadata: dict | None = None,
+    **extra: Any,
+) -> dict[str, Any]:
+    """Build a lowstate dict shared across local/ssh clients."""
+    low: dict[str, Any] = {
+        "client": client,
+        "tgt": tgt,
+        "fun": fun,
+    }
+    if arg:
+        low["arg"] = arg
+    if kwarg:
+        low["kwarg"] = kwarg
+    low["expr_form"] = expr_form
+    if tgt_type:
+        low["tgt_type"] = tgt_type
+    if timeout is not None:
+        low["timeout"] = timeout
+    if batch:
+        low["batch"] = batch
+    if ret:
+        low["ret"] = ret
+    if metadata:
+        low["metadata"] = metadata
+    low.update(extra)
+    return low
+
+
 class Pepper:
     """
     A thin wrapper for making HTTP calls to the salt-api REST interface.
@@ -75,7 +126,10 @@ class Pepper:
         return s
 
     def _request(
-        self, path: str, data: dict | None = None, stream: bool = False,
+        self,
+        path: str,
+        data: dict | None = None,
+        stream: bool = False,
         method: str = "POST",
     ) -> requests.Response:
         """
@@ -224,6 +278,8 @@ class Pepper:
 
         result = self._send_auth("/login", **creds)
         self.auth = result.get("return", [{}])[0]
+        if "token" in self.auth:
+            self.auth["_login_method"] = "session"
         return self.auth
 
     def token(self, **kwargs: Any) -> dict[str, Any]:
@@ -235,6 +291,33 @@ class Pepper:
             ``token``, ``expire``, etc.).
         """
         self.auth = self._send_auth("/token", **kwargs)[0]
+        self.auth["_login_method"] = "token"
+        return self.auth
+
+    def jwt_login(
+        self,
+        jwt_token: str,
+    ) -> dict[str, Any]:
+        """
+        Authenticate using a pre-obtained JWT token.
+
+        Salt's rest_tornado module supports JWT (JSON Web Token)
+        authentication when configured with ``auth.method: jwt``.
+        This sets the token directly on the session without a separate
+        ``/login`` call — the token is sent as ``X-Auth-Token``
+        on every request.
+
+        Args:
+            jwt_token: The JWT string to use as the auth token.
+
+        Returns:
+            A minimal auth dict carrying the JWT.
+        """
+        self.auth = {
+            "token": jwt_token,
+            "eauth": "jwt",
+            "_login_method": "jwt",
+        }
         return self.auth
 
     # ------------------------------------------------------------------
@@ -254,6 +337,32 @@ class Pepper:
         """
         return self._request_json(path, lowstate)
 
+    # ── common lowstate builder ──
+
+    @staticmethod
+    def _make_lowstate(
+        client: str,
+        tgt: str,
+        fun: str,
+        arg: list | None = None,
+        kwarg: dict | None = None,
+        expr_form: str = "glob",
+        tgt_type: str | None = None,
+        timeout: int | None = None,
+        ret: str | None = None,
+        batch: str | None = None,
+        metadata: dict | None = None,
+        **extra: Any,
+    ) -> dict[str, Any]:
+        """Build a lowstate dict shared across local/ssh clients."""
+        return make_lowstate(
+            client, tgt, fun,
+            arg=arg, kwarg=kwarg, expr_form=expr_form,
+            tgt_type=tgt_type, timeout=timeout, ret=ret,
+            batch=batch, metadata=metadata,
+            **extra,
+        )
+
     def local(
         self,
         tgt: str,
@@ -264,6 +373,7 @@ class Pepper:
         tgt_type: str | None = None,
         timeout: int | None = None,
         ret: str | None = None,
+        metadata: dict | None = None,
     ) -> Any:
         """
         Run a command using the ``local`` client.
@@ -276,24 +386,16 @@ class Pepper:
             expr_form: Target expression form (default ``glob``).
             tgt_type: Alias for ``expr_form`` (preferred in newer Salt).
             timeout: Timeout in seconds.
-            ret: Returner.
+            ret: Returner name.
+            metadata: Arbitrary dict attached to the job for external
+                      systems (Salt >= 2017.7).
         """
-        low: dict[str, Any] = {
-            "client": "local",
-            "tgt": tgt,
-            "fun": fun,
-        }
-        if arg:
-            low["arg"] = arg
-        if kwarg:
-            low["kwarg"] = kwarg
-        low["expr_form"] = expr_form
-        if tgt_type:
-            low["tgt_type"] = tgt_type
-        if timeout is not None:
-            low["timeout"] = timeout
-        if ret:
-            low["ret"] = ret
+        low = self._make_lowstate(
+            "local", tgt, fun,
+            arg=arg, kwarg=kwarg, expr_form=expr_form,
+            tgt_type=tgt_type, timeout=timeout, ret=ret,
+            metadata=metadata,
+        )
         return self.low([low])
 
     def local_async(
@@ -306,24 +408,15 @@ class Pepper:
         tgt_type: str | None = None,
         timeout: int | None = None,
         ret: str | None = None,
+        metadata: dict | None = None,
     ) -> Any:
         """Run a command using the ``local_async`` client."""
-        low: dict[str, Any] = {
-            "client": "local_async",
-            "tgt": tgt,
-            "fun": fun,
-        }
-        if arg:
-            low["arg"] = arg
-        if kwarg:
-            low["kwarg"] = kwarg
-        low["expr_form"] = expr_form
-        if tgt_type:
-            low["tgt_type"] = tgt_type
-        if timeout is not None:
-            low["timeout"] = timeout
-        if ret:
-            low["ret"] = ret
+        low = self._make_lowstate(
+            "local_async", tgt, fun,
+            arg=arg, kwarg=kwarg, expr_form=expr_form,
+            tgt_type=tgt_type, timeout=timeout, ret=ret,
+            metadata=metadata,
+        )
         return self.low([low])
 
     def local_batch(
@@ -336,24 +429,61 @@ class Pepper:
         tgt_type: str | None = None,
         batch: str = "50%",
         ret: str | None = None,
+        metadata: dict | None = None,
     ) -> Any:
         """Run a command using the ``local_batch`` client."""
+        low = self._make_lowstate(
+            "local_batch", tgt, fun,
+            arg=arg, kwarg=kwarg, expr_form=expr_form,
+            tgt_type=tgt_type, batch=batch, ret=ret,
+            metadata=metadata,
+        )
+        return self.low([low])
+
+    def ssh(
+        self,
+        tgt: str,
+        fun: str,
+        arg: list | None = None,
+        kwarg: dict | None = None,
+        expr_form: str = "glob",
+        tgt_type: str | None = None,
+        timeout: int | None = None,
+        ret: str | None = None,
+        metadata: dict | None = None,
+    ) -> Any:
+        """Run a command using the ``ssh`` client (salt-ssh via salt-api)."""
+        low = self._make_lowstate(
+            "ssh", tgt, fun,
+            arg=arg, kwarg=kwarg, expr_form=expr_form,
+            tgt_type=tgt_type, timeout=timeout, ret=ret,
+            metadata=metadata,
+        )
+        return self.low([low])
+
+    def queue(
+        self,
+        fun: str,
+        arg: list | None = None,
+        **kwargs: Any,
+    ) -> Any:
+        """
+        Run a command using the ``queue`` client.
+
+        The queue client manages Salt's job queue (enqueue, list, etc.).
+
+        Usage::
+
+            pepper.queue("queues.insert", queue="myqueue", items=[...])
+            pepper.queue("queues.list")
+        """
         low: dict[str, Any] = {
-            "client": "local_batch",
-            "tgt": tgt,
+            "client": "queue",
             "fun": fun,
         }
         if arg:
             low["arg"] = arg
-        if kwarg:
-            low["kwarg"] = kwarg
-        low["expr_form"] = expr_form
-        if tgt_type:
-            low["tgt_type"] = tgt_type
-        if batch:
-            low["batch"] = batch
-        if ret:
-            low["ret"] = ret
+        low.update(kwargs)
         return self.low([low])
 
     def lookup_jid(self, jid: str) -> Any:
@@ -416,12 +546,5 @@ class Pepper:
     # ------------------------------------------------------------------
 
     def _construct_url(self, path: str) -> str:
-        """
-        Build the full URL for a salt-api resource path.
-
-        Ensures exactly one slash between ``api_url`` and ``path``.
-        """
-        base = self.api_url.rstrip("/")
-        if not path.startswith("/"):
-            path = "/" + path
-        return base + path
+        """Build the full URL for a salt-api resource path."""
+        return construct_url(self.api_url, path)

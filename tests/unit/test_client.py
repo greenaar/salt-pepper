@@ -10,12 +10,6 @@ import responses
 from salt_pepper import Pepper, PepperException
 
 
-@pytest.fixture
-def api() -> Pepper:
-    """A Pepper instance pointing at a fake API URL."""
-    return Pepper("https://salt-api.example.com:8000")
-
-
 # ── Construction ────────────────────────────────────────────────────
 
 

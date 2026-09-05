@@ -6,6 +6,8 @@ Usage::
     pepper 'minion-*' test.ping
     pepper --client runner jobs.lookup_jid jid=12345
     pepper --client wheel key.accept match=myminion
+    pepper job status 2025090512000012345
+    pepper job log 2025090512000012345
 """
 
 from __future__ import annotations
@@ -27,6 +29,7 @@ from salt_pepper.exceptions import (
     PepperAuthException,
     PepperException,
 )
+from salt_pepper.output import format_result
 from salt_pepper.retcode import PepperRetcode
 
 logger = logging.getLogger(__name__)
@@ -37,33 +40,22 @@ logger = logging.getLogger(__name__)
 def _load_profile(
     config_path: str, profile: str
 ) -> dict[str, str | None]:
-    """
-    Load authentication details from a ``.pepperrc`` config file.
-
-    Compatibility: reads the old INI-style format used by pepper <=3.x.
-    Environment variables and CLI flags override these values.
-    """
     results: dict[str, str | None] = {
         "SALTAPI_URL": None,
         "SALTAPI_USER": None,
         "SALTAPI_PASS": None,
         "SALTAPI_EAUTH": "auto",
     }
-
     config = ConfigParser(interpolation=None)
     config.read(config_path)
-
     if config.has_section(profile):
         for key in results:
             if config.has_option(profile, key):
                 results[key] = config.get(profile, key)
-
-    # Environment overrides
     for key in results:
         env_val = os.environ.get(key)
         if env_val is not None:
             results[key] = env_val
-
     return results
 
 
@@ -83,11 +75,13 @@ class PepperConfig:
         self.userun: bool = False
         self.mktoken: bool = False
         self.cache: str = os.environ.get(
-            "PEPPERCACHE", os.path.join(os.path.expanduser("~"), ".peppercache")
+            "PEPPERCACHE",
+            os.path.join(os.path.expanduser("~"), ".peppercache"),
         )
+        self.output_format: str = "json"
+        self.jwt: str | None = None
 
     def setup_logging(self) -> None:
-        """Configure root logger based on verbosity."""
         root = logging.getLogger()
         handler = logging.StreamHandler(sys.stderr)
         root.addHandler(handler)
@@ -95,7 +89,6 @@ class PepperConfig:
         root.setLevel(level)
 
     def build_api(self) -> Pepper:
-        """Create and return a Pepper client instance."""
         return Pepper(
             self.api_url,
             debug_http=self.debug_http,
@@ -103,13 +96,12 @@ class PepperConfig:
         )
 
 
-# ── JSON decoder for --json / --json-file ──────────────────────────
+# ── JSON decoder ────────────────────────────────────────────────────
 
 
 def _parse_json_input(
     inline: str | None, filepath: str | None
 ) -> list[dict] | None:
-    """Parse JSON from inline string or file. Returns None if neither."""
     if inline:
         try:
             return json.loads(inline)
@@ -117,7 +109,6 @@ def _parse_json_input(
             raise PepperArgumentsException(
                 f"Invalid JSON: {exc}"
             ) from exc
-
     if filepath:
         try:
             with open(filepath) as fh:
@@ -130,15 +121,10 @@ def _parse_json_input(
             raise PepperArgumentsException(
                 f"Invalid JSON in {filepath}: {exc}"
             ) from exc
-
     return None
 
 
-# ── Argument parsing (positional → lowstate) ───────────────────────
-
-
-# Horizontal line for --help output
-SEPARATOR = "-" * 60
+# ── Argument parsing ────────────────────────────────────────────────
 
 
 def _build_lowstate(
@@ -151,39 +137,18 @@ def _build_lowstate(
     batch: str | None,
     api: Pepper,
     json_input: list[dict] | None,
+    metadata: dict | None = None,
 ) -> list[dict]:
-    """
-    Build a lowstate list from CLI arguments.
-
-    Two modes:
-    * JSON mode — returns the parsed JSON directly.
-    * CLI mode — constructs a lowstate dict from flags + positionals.
-    """
     if json_input is not None:
         return json_input
 
     args_list = list(args)
-
     low: dict[str, Any] = {"client": client}
 
-    if client.startswith("local"):
+    if client.startswith(("local", "ssh")):
         if target is None or command is None:
             raise click.UsageError(
                 "Target and function are required for local/ssh clients",
-                ctx=ctx,
-            )
-        low["tgt"] = target
-        low["fun"] = command
-        low["tgt_type"] = expr_form
-        if batch:
-            low["batch"] = batch
-        if args_list:
-            low["arg"] = args_list
-
-    elif client.startswith("ssh"):
-        if target is None or command is None:
-            raise click.UsageError(
-                "Target and function are required for SSH client",
                 ctx=ctx,
             )
         low["tgt"] = target
@@ -202,7 +167,6 @@ def _build_lowstate(
             )
         low["fun"] = command
         if api.salt_version:
-            # Salt Neon+ — pass args raw for kwarg splitting on server side
             low["arg"] = args_list
         else:
             for arg_val in args_list:
@@ -216,6 +180,9 @@ def _build_lowstate(
                     low.setdefault("arg", []).append(arg_val)
     else:
         raise PepperException(f"Client not implemented: {client}")
+
+    if metadata:
+        low["metadata"] = metadata
 
     return [low]
 
@@ -231,19 +198,17 @@ def _authenticate(
     non_interactive: bool,
     token_expire: int | None,
 ) -> None:
-    """
-    Authenticate with salt-api, handling token expiry and caching.
-    """
     api = cfg.api
     assert api is not None
 
-    # Resolve credentials
-    profile = _load_profile(
-        _rc_path(), _profile_name()
-    )
-    resolved_user = (
-        username or profile.get("SALTAPI_USER")
-    )
+    # JWT auth bypasses interactive prompt
+    if cfg.jwt:
+        api.jwt_login(cfg.jwt)
+        cfg.auth = api.auth
+        return
+
+    profile = _load_profile(_rc_path(), _profile_name())
+    resolved_user = username or profile.get("SALTAPI_USER")
     resolved_pass = password or profile.get("SALTAPI_PASS")
     resolved_eauth = eauth or profile.get("SALTAPI_EAUTH") or "auto"
 
@@ -266,17 +231,14 @@ def _authenticate(
         auth_kwargs["token_expire"] = token_expire
 
     login_method = api.token if cfg.userun else api.login
-
     if cfg.mktoken:
         _load_or_create_token(cfg, login_method, auth_kwargs)
     else:
         cfg.auth = login_method(**auth_kwargs)
-
     api.auth = cfg.auth
 
 
 def _rc_path() -> str:
-    """Determine the config file path."""
     return os.environ.get(
         "PEPPERRC",
         os.path.join(os.path.expanduser("~"), ".pepperrc"),
@@ -284,7 +246,6 @@ def _rc_path() -> str:
 
 
 def _profile_name() -> str:
-    """Determine the config profile name."""
     return os.environ.get("PEPPERPROFILE", "main")
 
 
@@ -293,7 +254,6 @@ def _load_or_create_token(
     login_method: Any,
     auth_kwargs: dict,
 ) -> None:
-    """Try loading a cached token; create one if expired or missing."""
     token_file = cfg.cache
     try:
         with open(token_file) as fh:
@@ -310,9 +270,7 @@ def _load_or_create_token(
             with os.fdopen(fdsc, "wt") as fh:
                 json.dump(auth, fh)
         except Exception as exc:
-            logger.error(
-                "Unable to save token to %s: %s", token_file, exc
-            )
+            logger.error("Unable to save token to %s: %s", token_file, exc)
         cfg.auth = auth
 
 
@@ -326,7 +284,6 @@ def _poll_for_returns(
     fail_incomplete: bool,
     seconds_to_wait: int = 3,
 ) -> Any:
-    """Run async, poll job cache, yield results as they arrive."""
     api = cfg.api
     assert api is not None
 
@@ -365,7 +322,6 @@ def _poll_for_returns(
         ret_nodes = list(inner_ret.keys())
         if set(ret_nodes) >= set(nodes):
             break
-
         time.sleep(seconds_to_wait)
 
     exit_code = exit_code if fail_incomplete else 0
@@ -374,17 +330,61 @@ def _poll_for_returns(
         yield exit_code, [{"Failed": sorted(failed)}]
 
 
-# ── Output formatter ────────────────────────────────────────────────
+# ── Output helper ───────────────────────────────────────────────────
 
 
-def _output(result: Any, output_file: str | None) -> None:
-    """Write result to file or stdout as pretty-printed JSON."""
-    formatted = json.dumps(result, sort_keys=True, indent=4)
+def _output(result: Any, output_file: str | None, fmt: str = "json") -> None:
+    formatted = format_result(result, fmt=fmt)
     if output_file:
         with open(output_file, "a") as fh:
             print(formatted, file=fh)
     else:
         click.echo(formatted)
+
+
+# ── Build / authenticate helper for subcommands ─────────────────────
+
+
+def _build_cfg_from_parent(ctx: click.Context) -> PepperConfig:
+    """Recreate a PepperConfig from parent context params (for subcommands)."""
+    cfg = PepperConfig()
+    p = ctx.parent.params  # type: ignore[union-attr]
+    cfg.verbose = p.get("verbose", 0)
+    cfg.debug_http = p.get("debug_http", False)
+    cfg.ignore_ssl = p.get("ignore_ssl_errors", False)
+    cfg.userun = p.get("run_uri", False)
+    cfg.mktoken = p.get("make_token", False)
+    cfg.cache = p.get("cache_path") or cfg.cache
+    cfg.output_format = p.get("output_format") or "json"
+    cfg.jwt = p.get("jwt_token")
+
+    # Resolve URL
+    saltapi_url = p.get("saltapi_url")
+    if saltapi_url:
+        cfg.api_url = saltapi_url
+    else:
+        profile = _load_profile(
+            p.get("config_path", _rc_path()),
+            p.get("profile_name", _profile_name()),
+        )
+        cfg.api_url = (
+            profile.get("SALTAPI_URL")
+            or os.environ.get("SALTAPI_URL")
+            or "https://localhost:8000"
+        )
+
+    cfg.api = cfg.build_api()
+    cfg.setup_logging()
+
+    _authenticate(
+        cfg,
+        p.get("username"),
+        p.get("password"),
+        p.get("eauth", "auto"),
+        p.get("non_interactive", False),
+        p.get("token_expire"),
+    )
+    return cfg
 
 
 # ── CLI ─────────────────────────────────────────────────────────────
@@ -464,6 +464,12 @@ def _output(result: Any, output_file: str | None) -> None:
     show_default=False,
 )
 @click.option(
+    "--jwt",
+    "jwt_token",
+    default=None,
+    help="JWT token for authentication (rest_tornado. skips password prompt).",
+)
+@click.option(
     "-v",
     "--verbose",
     count=True,
@@ -492,7 +498,7 @@ def _output(result: Any, output_file: str | None) -> None:
 @click.option(
     "--client",
     default="local",
-    help="Salt client: local, local_async, local_batch, runner, wheel, ssh.",
+    help="Salt client: local, local_async, local_batch, runner, wheel, ssh, queue.",
 )
 @click.option(
     "--json",
@@ -509,12 +515,20 @@ def _output(result: Any, output_file: str | None) -> None:
     "-o",
     "--out",
     "output_format",
-    help="Outputter name (requires Salt installed; otherwise ignored).",
+    type=click.Choice(["json", "yaml", "table"]),
+    default="json",
+    help="Output format (default: json).",
 )
 @click.option(
     "--output-file",
     "output_file",
     help="Write output to FILE (appends).",
+)
+@click.option(
+    "--metadata",
+    "metadata_json",
+    default=None,
+    help="Arbitrary JSON metadata attached to the job (e.g. '{\"key\":\"val\"}').",
 )
 @click.option(
     "--fail-if-incomplete",
@@ -546,7 +560,6 @@ def _output(result: Any, output_file: str | None) -> None:
     default=False,
     help="Fail if all retcodes are non-zero or no retcodes exist.",
 )
-# Targeting flags
 @click.option(
     "-E",
     "--pcre",
@@ -624,10 +637,9 @@ def _output(result: Any, output_file: str | None) -> None:
     help="Salt master config path (for outputters).",
     show_default=False,
 )
-# Positional arguments: target [command [args...]]
 @click.argument("target", required=False)
 @click.argument("command", required=False)
-@click.argument("extra_args", nargs=-1, required=False)
+@click.argument("extra_args", nargs=-1)
 @click.pass_context
 def cli(
     ctx: click.Context,
@@ -642,6 +654,7 @@ def cli(
     make_token: bool,
     run_uri: bool,
     cache_path: str,
+    jwt_token: str | None,
     verbose: int,
     debug_http: bool,
     ignore_ssl_errors: bool,
@@ -649,8 +662,9 @@ def cli(
     client: str,
     json_input: str | None,
     json_file: str | None,
-    output_format: str | None,
+    output_format: str,
     output_file: str | None,
+    metadata_json: str | None,
     fail_incomplete: bool,
     fail_any: bool,
     fail_any_none: bool,
@@ -663,8 +677,7 @@ def cli(
     command: str | None,
     extra_args: tuple[str, ...],
 ) -> None:
-    """
-    Salt API CLI — run commands on a remote Salt infrastructure.
+    """Salt API CLI — run commands on a remote Salt infrastructure.
 
     Examples:
 
@@ -676,9 +689,18 @@ def cli(
 
         pepper --client wheel key.list_all
 
-        pepper --json '{"client":"local","tgt":"*","fun":"test.ping"}'
+        pepper --client queue queues.insert queue=myqueue items=["a"]
+
+        pepper --jwt $JWT '*' test.ping
+
+        pepper --out table '*' test.ping
+
+        pepper job status 2025090512000012345
     """
-    # ── Mutual exclusion for --fail-* flags ──
+    if ctx.invoked_subcommand is not None:
+        return  # subcommand handles itself
+
+    # ── Mutual exclusion ──
     fail_flags = [
         n
         for n, v in [
@@ -694,7 +716,17 @@ def cli(
             f"Options {', '.join(fail_flags)} are mutually exclusive"
         )
 
-    # ── Build config context ──
+    # ── Parse metadata ──
+    parsed_metadata: dict | None = None
+    if metadata_json:
+        try:
+            parsed_metadata = json.loads(metadata_json)
+        except json.JSONDecodeError as exc:
+            raise click.UsageError(
+                f"Invalid --metadata JSON: {exc}"
+            ) from exc
+
+    # ── Build config ──
     cfg = PepperConfig()
     cfg.verbose = verbose
     cfg.debug_http = debug_http
@@ -702,9 +734,11 @@ def cli(
     cfg.userun = run_uri
     cfg.mktoken = make_token
     cfg.cache = cache_path
+    cfg.output_format = output_format
+    cfg.jwt = jwt_token
     cfg.setup_logging()
 
-    # ── Resolve API URL ──
+    # ── Resolve URL ──
     if saltapi_url:
         cfg.api_url = saltapi_url
     else:
@@ -715,17 +749,15 @@ def cli(
             or "https://localhost:8000"
         )
 
-    # ── Build API client ──
     cfg.api = cfg.build_api()
     api = cfg.api
 
     # ── Authenticate ──
     _authenticate(cfg, username, password, eauth, non_interactive, token_expire)
 
-    # ── Parse JSON input if provided ──
+    # ── Parse input ──
     json_lowstate = _parse_json_input(json_input, json_file)
 
-    # ── Build lowstate ──
     if client.startswith("local") and batch:
         client = "local_batch"
 
@@ -739,14 +771,13 @@ def cli(
         batch,
         api,
         json_lowstate,
+        metadata=parsed_metadata,
     )
 
-    # Add full_return for non-wheel clients
     for entry in load:
         if not entry.get("client", "").startswith("wheel"):
             entry["full_return"] = True
 
-    # Add timeout to payload (tornado backend)
     if api.salt_version and timeout:
         for entry in load:
             if not entry.get("client", "").startswith("wheel"):
@@ -757,27 +788,32 @@ def cli(
         if fail_incomplete:
             gen = _poll_for_returns(cfg, load, timeout, fail_incomplete)
             for _exit_code, partial in gen:
-                _output(partial, output_file)
+                _output(partial, output_file, fmt=output_format)
         else:
-            # Set path based on /run VS /
             path = "/run" if cfg.userun else "/"
             if cfg.userun:
                 for entry in load:
                     entry["token"] = cfg.auth.get("token")
             ret = api.low(load, path=path)
-            _output(ret, output_file)
+            _output(ret, output_file, fmt=output_format)
             exit_code = 0
 
-        # ── Retcode validation ──
         if exit_code is not None and exit_code == 0:
             rc = PepperRetcode()
-            validated: int = rc.validate(ctx.params, ret if not fail_incomplete else partial)
+            validated: int = rc.validate(
+                ctx.params,
+                ret if not fail_incomplete else partial,
+            )
             if isinstance(validated, int) and validated != 0:
                 exit_code = validated
 
         ctx.exit(exit_code if exit_code is not None else 0)
 
-    except (PepperException, PepperAuthException, PepperArgumentsException) as exc:
+    except (
+        PepperException,
+        PepperAuthException,
+        PepperArgumentsException,
+    ) as exc:
         click.echo(f"Pepper error: {exc}", err=True)
         ctx.exit(1)
     except KeyboardInterrupt:
@@ -789,6 +825,62 @@ def cli(
             err=True,
         )
         logger.debug("Uncaught traceback:", exc_info=True)
+        ctx.exit(1)
+
+
+# ── Subcommand: pepper job ──────────────────────────────────────────
+
+
+@cli.group()
+def job() -> None:
+    """Query and manage Salt jobs."""
+
+
+@job.command()
+@click.argument("jid", required=True)
+@click.pass_context
+def status(ctx: click.Context, jid: str) -> None:
+    """Show the status of a Salt job (list_job)."""
+    cfg = _build_cfg_from_parent(ctx)
+    api = cfg.api
+    assert api is not None
+    try:
+        result = api.runner("jobs.list_job", jid=jid)
+        _output(result, None, fmt=cfg.output_format)
+    except (PepperException, PepperAuthException) as exc:
+        click.echo(f"Pepper error: {exc}", err=True)
+        ctx.exit(1)
+
+
+@job.command()
+@click.argument("jid", required=True)
+@click.pass_context
+def log(ctx: click.Context, jid: str) -> None:
+    """Show the results of a completed job (lookup_jid)."""
+    cfg = _build_cfg_from_parent(ctx)
+    api = cfg.api
+    assert api is not None
+    try:
+        result = api.lookup_jid(jid)
+        _output(result, None, fmt=cfg.output_format)
+    except (PepperException, PepperAuthException) as exc:
+        click.echo(f"Pepper error: {exc}", err=True)
+        ctx.exit(1)
+
+
+@job.command()
+@click.argument("jid", required=True)
+@click.pass_context
+def kill(ctx: click.Context, jid: str) -> None:
+    """Kill a running Salt job."""
+    cfg = _build_cfg_from_parent(ctx)
+    api = cfg.api
+    assert api is not None
+    try:
+        result = api.runner("jobs.kill_job", jid=jid)
+        _output(result, None, fmt=cfg.output_format)
+    except (PepperException, PepperAuthException) as exc:
+        click.echo(f"Pepper error: {exc}", err=True)
         ctx.exit(1)
 
 

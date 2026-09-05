@@ -34,6 +34,7 @@ classifiers = [
 
 dependencies = [
     "click>=8.0",
+    "httpx>=0.27",
     "requests>=2.25",
 ]
 
@@ -64,6 +65,7 @@ artifacts = ["scripts/pepper"]
 testpaths = ["tests"]
 norecursedirs = [".git", ".nox", ".venv", "src"]
 addopts = "--showlocals -ra"
+asyncio_mode = "auto"
 
 [tool.ruff]
 target-version = "py39"
