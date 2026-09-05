@@ -1,0 +1,10 @@
+/build
+*.py[co]
+*.swp
+*.DS_Store
+
+MANIFEST
+dist/
+salt_pepper.egg-info/
+.nox/
+artifacts/
