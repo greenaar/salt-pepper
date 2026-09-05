@@ -117,6 +117,104 @@ ruff check src/
 mypy src/
 ```
 
+## Secrets & Authentication
+
+salt-pepper supports multiple authentication methods, each with different
+security characteristics. Here is how they work and how to keep credentials
+safe.
+
+### Authentication Order of Precedence
+
+Secrets are resolved in this order (highest priority first):
+
+1. **CLI flags** (`--username`, `--password`, `--jwt`)
+2. **Environment variables** (`SALTAPI_USER`, `SALTAPI_PASS`, `SALTAPI_URL`, `SALTAPI_EAUTH`)
+3. **Config file** (`~/.pepperrc.yml` or `~/.pepperrc`)
+
+### Methods
+
+#### 1. Interactive prompt (default)
+
+When no credentials are given, pepper prompts for username and password:
+
+```bash
+pepper '*' test.ping
+Username: <type user>
+Password: <type password, hidden>
+```
+
+This is the safest for interactive use — credentials never touch disk,
+terminal history, or process lists.
+
+#### 2. Environment variables (non-interactive / CI)
+
+```bash
+export SALTAPI_URL=https://salt.example.com:8000
+export SALTAPI_USER=deploybot
+export SALTAPI_PASS=s8CR3t!
+export SALTAPI_EAUTH=pam
+
+pepper --non-interactive '*' test.ping
+```
+
+**Security**: Environment variables are visible in `/proc/self/environ`
+to the owning user and root. Good for containers and CI runners where
+the environment is scoped to a single process tree.
+
+#### 3. YAML config file (`~/.pepperrc.yml`)
+
+```yaml
+main:
+  saltapi_url: https://salt.example.com:8000
+  saltapi_user: admin
+  saltapi_eauth: pam
+
+prod:
+  saltapi_url: https://salt-prod.example.com:8000
+  saltapi_user: deploy
+  saltapi_eauth: auto
+```
+
+Use with:
+```bash
+pepper -p prod '*' test.ping
+```
+
+**Security**: The config file is a plaintext file in your home directory.
+Protect it with `chmod 600 ~/.pepperrc.yml`. Do not commit it to version
+control. Never store production passwords in config files — use
+environment variables or the interactive prompt instead.
+
+Config files are optional and backward-compatible — old `.pepperrc` INI
+files still work.
+
+#### 4. Token caching (`--make-token`)
+
+```bash
+pepper -T '*' test.ping     # login once, token cached to ~/.peppercache
+pepper '*' test.ping         # reuses cached token
+```
+
+The cached token is stored in `~/.peppercache` with `0600` permissions.
+Tokens expire based on Salt master settings; pepper automatically
+refreshes them.
+
+#### 5. JWT tokens (`--jwt`)
+
+```bash
+pepper --jwt 'eyJhbGciOi...' '*' test.ping
+```
+
+JWT is supported by Salt's `rest_tornado` module. The token is sent as
+`X-Auth-Token` on every request. No separate `/login` call is made.
+
+### What NOT to do
+
+- Do **not** put passwords in `.bash_history` (use `$HISTIGNORE`)
+- Do **not** pass passwords in CLI flags in shared/multi-user environments
+  (they are visible in `/proc/pid/cmdline`)
+- Do **not** commit config files with passwords to git
+
 ## Roadmap
 
 ### Phase 1 — Modernize (minimal diffs)
@@ -139,11 +237,11 @@ mypy src/
 - [x] `pepper job` subcommand (job status, log, kill)
 
 ### Phase 3 — Polish
-- [ ] Subcommand structure (`run`, `key`, `event`, `job`)
-- [ ] Config file in YAML/TOML instead of INI
-- [ ] Completions (shell auto-complete)
-- [ ] Rich error output with context
-- [ ] Event streaming CLI
+- [x] Subcommand structure (`run`, `key`, `event`, `job`)
+- [x] Config file in YAML/TOML instead of INI
+- [x] Completions (shell auto-complete)
+- [x] Rich error output with context
+- [x] Event streaming CLI
 
 ## Related
 

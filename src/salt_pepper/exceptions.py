@@ -11,3 +11,7 @@ class PepperArgumentsException(Exception):  # noqa: N818
 
 class PepperException(Exception):  # noqa: N818
     """General salt-api client errors."""
+
+    def __init__(self, message: str, response_body: str | None = None) -> None:
+        super().__init__(message)
+        self.response_body = response_body

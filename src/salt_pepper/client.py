@@ -156,12 +156,12 @@ class Pepper:
             resp = sess.request(method, url, data=body, stream=stream)
 
             if resp.status_code == 401:
-                raise PepperException("Authentication denied")
+                raise PepperException("Authentication denied", response_body=resp.text)
             if resp.status_code == 500:
-                raise PepperException("Server error")
+                raise PepperException("Server error", response_body=resp.text)
             if resp.status_code == 404:
                 raise PepperException(
-                    f"Resource not found: {path}"
+                    f"Resource not found: {path}", response_body=resp.text,
                 )
 
             # Capture salt-version header for feature detection
@@ -220,12 +220,12 @@ class Pepper:
         try:
             resp = sess.get(url)
             if resp.status_code == 401:
-                raise PepperException("Authentication denied")
+                raise PepperException("Authentication denied", response_body=resp.text)
             if resp.status_code == 500:
-                raise PepperException("Server error")
+                raise PepperException("Server error", response_body=resp.text)
             if resp.status_code == 404:
                 raise PepperException(
-                    f"Resource not found: {path}"
+                    f"Resource not found: {path}", response_body=resp.text,
                 )
             resp.raise_for_status()
         except requests.RequestException as exc:
