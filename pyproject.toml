@@ -1,8 +1,81 @@
-[tool.pytest.ini_options]
-addopts = "--showlocals --log-file /tmp/pepper-runtests.log --show-capture=no -ra"
-testpaths = ["tests"]
-norecursedirs = [".git", ".nox"]
-usefixtures = ["pepperconfig"]
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
 
-[tool.flake8]
-max-line-length = 119
+[project]
+name = "salt-pepper"
+version = "4.0.0.dev0"
+description = "A modern CLI front-end for salt-api"
+readme = "README.md"
+license = { text = "Apache-2.0" }
+requires-python = ">=3.9"
+
+authors = [
+    { name = "Seth House", email = "shouse@saltstack.com" },
+]
+
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Development Status :: 4 - Beta",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Information Technology",
+    "Intended Audience :: System Administrators",
+    "License :: OSI Approved :: Apache Software License",
+    "Operating System :: POSIX :: Linux",
+    "Topic :: System :: Clustering",
+    "Topic :: System :: Distributed Computing",
+]
+
+dependencies = [
+    "click>=8.0",
+    "requests>=2.25",
+]
+
+[project.optional-dependencies]
+kerberos = ["requests-gssapi>=1.1.0"]
+dev = [
+    "pytest>=7",
+    "pytest-mock>=3",
+    "responses>=0.23",
+    "ruff>=0.3",
+    "mypy>=1.8",
+]
+
+[project.urls]
+Homepage = "https://forge.thatserver.ca/agreengrass/salt-pepper"
+Source = "https://github.com/saltstack/pepper"
+
+[project.scripts]
+pepper = "salt_pepper.script:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/salt_pepper"]
+
+[tool.hatch.build]
+artifacts = ["scripts/pepper"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+norecursedirs = [".git", ".nox", ".venv", "src"]
+addopts = "--showlocals -ra"
+
+[tool.ruff]
+target-version = "py39"
+line-length = 100
+src = ["src"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "N", "UP", "B", "SIM"]
+
+[tool.mypy]
+python_version = "3.10"
+strict = false
+check_untyped_defs = true
+ignore_missing_imports = true
+warn_unused_ignores = true
