@@ -86,6 +86,7 @@ def _load_profile_yaml(config_path: str, profile: str) -> dict[str, str | None]:
         "SALTAPI_USER": profile_data.get("saltapi_user"),
         "SALTAPI_PASS": profile_data.get("saltapi_pass"),
         "SALTAPI_EAUTH": profile_data.get("saltapi_eauth", "auto"),
+        "BACKEND": profile_data.get("backend", "cherrypy"),
     }
     return results
 
@@ -97,6 +98,7 @@ def _load_profile_ini(config_path: str, profile: str) -> dict[str, str | None]:
         "SALTAPI_USER": None,
         "SALTAPI_PASS": None,
         "SALTAPI_EAUTH": "auto",
+        "BACKEND": "cherrypy",
     }
     config = ConfigParser(interpolation=None)
     config.read(config_path)
@@ -127,6 +129,7 @@ def _load_profile(
         "SALTAPI_USER": "SALTAPI_USER",
         "SALTAPI_PASS": "SALTAPI_PASS",
         "SALTAPI_EAUTH": "SALTAPI_EAUTH",
+        "BACKEND": "PEPPER_BACKEND",
     }
     for key, env_name in env_map.items():
         env_val = os.environ.get(env_name)
@@ -152,6 +155,7 @@ class PepperConfig:
         self.api_url: str = "https://localhost:8000"
         self.api: Pepper | None = None
         self.auth: dict[str, Any] = {}
+        self.backend: str = "cherrypy"
         self.verbose: int = 0
         self.debug_http: bool = False
         self.ignore_ssl: bool = False
@@ -176,6 +180,7 @@ class PepperConfig:
             self.api_url,
             debug_http=self.debug_http,
             ignore_ssl_errors=self.ignore_ssl,
+            backend=self.backend,  # type: ignore[arg-type]
         )
 
 
@@ -329,6 +334,19 @@ def _authenticate(
     resolved_pass = password or profile.get("SALTAPI_PASS")
     resolved_eauth = eauth or profile.get("SALTAPI_EAUTH") or "auto"
 
+    # Alcali backend: use JWT login on /api/token/
+    if cfg.backend == "alcali":
+        if resolved_user is None:
+            if non_interactive:
+                raise PepperAuthException("SALTAPI_USER required")
+            resolved_user = input("Username: ")
+        if resolved_pass is None:
+            if non_interactive:
+                raise PepperAuthException("SALTAPI_PASS required")
+            resolved_pass = getpass.getpass(prompt="Password: ")
+        cfg.auth = api.alcali_login(resolved_user, resolved_pass)  # type: ignore[union-attr]
+        return
+
     if resolved_user is None:
         if non_interactive:
             raise PepperAuthException("SALTAPI_USER required")
@@ -469,6 +487,7 @@ def _resolve_config(ctx: click.Context) -> PepperConfig:
     cfg.cache = p.get("cache_path") or cfg.cache
     cfg.output_format = p.get("output_format") or "json"
     cfg.jwt = p.get("jwt_token")
+    cfg.backend = p.get("backend") or cfg.backend
 
     # Resolve URL
     saltapi_url = p.get("saltapi_url")
@@ -553,6 +572,12 @@ _SHARED_OPTS = [
         help="JWT token for authentication (rest_tornado).",
     ),
     click.option(
+        "--backend", "backend",
+        type=click.Choice(["cherrypy", "alcali"]),
+        default=None,
+        help="Backend: cherrypy (salt-api rest_cherrypy) or alcali (Django REST API).",
+    ),
+    click.option(
         "-v", "--verbose", count=True,
         help="Increase verbosity.",
     ),
@@ -590,6 +615,7 @@ def _pepper_config_from_params(params: dict) -> PepperConfig:
     cfg.cache = params.get("cache_path") or cfg.cache
     cfg.output_format = params.get("output_format") or "json"
     cfg.jwt = params.get("jwt_token")
+    cfg.backend = params.get("backend") or cfg.backend
     cfg.setup_logging()
 
     saltapi_url = params.get("saltapi_url")
@@ -817,6 +843,7 @@ def cli(
     cfg.cache = cache_path
     cfg.output_format = output_format
     cfg.jwt = jwt_token
+    cfg.backend = backend or cfg.backend
     cfg.setup_logging()
 
     profile = _load_profile(config_path, profile_name)

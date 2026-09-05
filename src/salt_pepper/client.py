@@ -1,19 +1,22 @@
 """
 A Python library for working with Salt's REST API
-(specifically the rest_cherrypy and rest_tornado netapi modules).
+(specifically the rest_cherrypy and rest_tornado netapi modules,
+and the Alcali Django REST API).
 """
 
 from __future__ import annotations
 
 import json
 import logging
-from typing import Any
+from typing import Any, Literal
 
 import requests
 
 from salt_pepper.exceptions import PepperException
 
 logger = logging.getLogger(__name__)
+
+BackendName = Literal["cherrypy", "alcali"]
 
 
 def construct_url(api_url: str, path: str) -> str:
@@ -71,11 +74,23 @@ class Pepper:
     """
     A thin wrapper for making HTTP calls to the salt-api REST interface.
 
-    Usage::
+    Supports two backends:
+
+    * ``cherrypy`` (default) — standard salt-api rest_cherrypy using
+      CherryPy session cookies for authentication.
+    * ``alcali`` — Alcali Django REST API using JWT Bearer tokens.
+
+    Usage (cherrypy)::
 
         api = Pepper("https://localhost:8000")
         api.login("saltdev", "saltdev", "pam")
         api.low([{"client": "local", "tgt": "*", "fun": "test.ping"}])
+
+    Usage (alcali)::
+
+        api = Pepper("https://salt.example.com:8443", backend="alcali")
+        api.alcali_login("saltdev", "secret")
+        api.alcali_run("test.ping", tgt="*")
     """
 
     def __init__(
@@ -83,6 +98,7 @@ class Pepper:
         api_url: str = "https://localhost:8000",
         debug_http: bool = False,
         ignore_ssl_errors: bool = False,
+        backend: BackendName = "cherrypy",
     ) -> None:
         """
         Initialize the class with the URL of the salt-api service.
@@ -91,6 +107,8 @@ class Pepper:
             api_url: URL of the salt-api (including protocol and port).
             debug_http: Enable HTTP-level debug logging.
             ignore_ssl_errors: Skip SSL certificate verification.
+            backend: ``"cherrypy"`` (standard rest_cherrypy) or
+                     ``"alcali"`` (Django REST API).
         """
         from urllib.parse import urlsplit
 
@@ -103,16 +121,20 @@ class Pepper:
         self.api_url = api_url
         self.debug_http = debug_http
         self.ssl_verify = not ignore_ssl_errors
+        self.backend: BackendName = backend
         self.auth: dict[str, Any] = {}
         self.salt_version: str | None = None
+        self._session_obj: requests.Session | None = None
 
     # ------------------------------------------------------------------
     # Low-level HTTP helpers
     # ------------------------------------------------------------------
 
     def _session(self) -> requests.Session:
-        """Build a requests.Session with standard headers."""
-        s = requests.Session()
+        """Build/return a persistent requests.Session with standard headers."""
+        if self._session_obj is None:
+            self._session_obj = requests.Session()
+        s = self._session_obj
         s.verify = self.ssl_verify
         s.headers.update(
             {
@@ -121,8 +143,15 @@ class Pepper:
                 "X-Requested-With": "XMLHttpRequest",
             }
         )
-        if self.auth and self.auth.get("token"):
+        # CherryPy backend: auth is via session_id cookie (set by login),
+        # not the X-Auth-Token header. The requests.Session stores cookies
+        # automatically, so no token header is needed.
+        # Exception: rest_tornado JWT mode uses X-Auth-Token.
+        if self.auth.get("_login_method") == "jwt" and self.auth.get("token"):
             s.headers["X-Auth-Token"] = str(self.auth["token"])
+        # Alcali backend: uses Authorization: Bearer header set by alcali_login().
+        if self.backend == "alcali" and self.auth.get("token"):
+            s.headers["Authorization"] = f"Bearer {self.auth['token']}"
         return s
 
     def _request(
@@ -261,7 +290,12 @@ class Pepper:
         **kwargs: Any,
     ) -> dict[str, Any]:
         """
-        Authenticate with salt-api and return user permissions + token.
+        Authenticate with salt-api (rest_cherrypy) and return
+        user permissions + token.
+
+        Uses CherryPy session cookies for subsequent requests.
+        The ``session_id`` cookie from the login response is
+        automatically preserved by ``requests.Session``.
 
         Returns:
             The ``return[0]`` dict (contains ``token``, ``expire``,
@@ -318,10 +352,145 @@ class Pepper:
             "eauth": "jwt",
             "_login_method": "jwt",
         }
+        self._update_auth_headers()
         return self.auth
 
     # ------------------------------------------------------------------
-    # Client convenience methods
+    # Alcali backend (JWT Bearer auth)
+    # ------------------------------------------------------------------
+
+    def alcali_login(
+        self,
+        username: str,
+        password: str,
+    ) -> dict[str, Any]:
+        """
+        Authenticate with the Alcali Django REST API using JWT.
+
+        Obtains a JWT token from ``/api/token/`` and sets the
+        ``Authorization: Bearer`` header on the session. Subsequent
+        requests to non-``/api/run/`` endpoints (minions, keys, etc.)
+        use a standard JSON POST.
+
+        Args:
+            username: Alcali username.
+            password: Alcali password.
+
+        Returns:
+            The full JWT response (includes ``access`` and ``refresh``
+            tokens, ``username``, ``id``, ``email``, ``is_staff``).
+
+        Raises:
+            PepperException: On authentication failure.
+        """
+        url = self._construct_url("/api/token/")
+        sess = self._session()
+
+        try:
+            resp = sess.post(
+                url,
+                json={"username": username, "password": password},
+            )
+            if resp.status_code == 401:
+                raise PepperException(
+                    "Alcali authentication denied", response_body=resp.text,
+                )
+            resp.raise_for_status()
+        except requests.RequestException as exc:
+            if isinstance(exc, PepperException):
+                raise
+            raise PepperException(f"Alcali authentication failed: {exc}") from exc
+
+        data = resp.json()
+        self.auth = {
+            "token": data["access"],
+            "refresh_token": data.get("refresh"),
+            "username": data.get("username"),
+            "user_id": data.get("id"),
+            "email": data.get("email"),
+            "is_staff": data.get("is_staff", False),
+            "eauth": "jwt",
+            "_login_method": "alcali_jwt",
+        }
+        # Set the Bearer header on our session
+        self._update_auth_headers()
+        return data
+
+    def _update_auth_headers(self) -> None:
+        """Refresh session headers from current auth state."""
+        if self._session_obj is not None:
+            s = self._session_obj
+            # Clear stale Bearer header
+            s.headers.pop("Authorization", None)
+            s.headers.pop("X-Auth-Token", None)
+
+            if self.backend == "alcali" and self.auth.get("token"):
+                s.headers["Authorization"] = f"Bearer {self.auth['token']}"
+
+    def alcali_run(
+        self,
+        command: str,
+        tgt: str = "*",
+        client: str = "local",
+        raw: bool = True,
+    ) -> Any:
+        """
+        Execute a Salt command through the Alcali ``/api/run/`` endpoint.
+
+        The command is sent as form-encoded data (matching the Alcali
+        Vue.js frontend's format).
+
+        Args:
+            command: Salt function to execute (e.g. ``"test.ping"``).
+            tgt: Target specification (default ``"*"``).
+            client: Salt client (``"local"`` or ``"runner"``).
+            raw: If True, request raw unformatted output.
+
+        Returns:
+            The parsed JSON response from Alcali.
+
+        Raises:
+            PepperException: On failure.
+        """
+        url = self._construct_url("/api/run/")
+        sess = self._session()
+
+        # Build the command string in the format Alcali expects
+        if client == "runner":
+            cmd_str = command
+        elif tgt == "*":
+            cmd_str = f"'{command}'" if " " in command else command
+        else:
+            # Alcali CLI-style: salt target function args
+            cmd_str = command
+
+        form_data: dict[str, str] = {"command": cmd_str}
+        if raw:
+            form_data["raw"] = "true"
+        if client == "local":
+            form_data["tgt"] = tgt
+
+        try:
+            resp = sess.post(url, data=form_data)
+            if resp.status_code == 401:
+                raise PepperException(
+                    "Authentication denied",
+                    response_body=resp.text,
+                )
+            resp.raise_for_status()
+        except requests.RequestException as exc:
+            if isinstance(exc, PepperException):
+                raise
+            raise PepperException(str(exc)) from exc
+
+        try:
+            return resp.json()
+        except ValueError:
+            # Alcali may return raw text on 500
+            return {"error": resp.text}
+
+    # ------------------------------------------------------------------
+    # Client convenience methods (cherrypy backend)
     # ------------------------------------------------------------------
 
     def low(self, lowstate: list[dict], path: str = "/") -> Any:

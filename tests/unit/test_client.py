@@ -342,7 +342,8 @@ class TestPepperStream:
 
 class TestAuthHeaders:
     @responses.activate
-    def test_auth_token_in_headers(self, api: Pepper) -> None:
+    def test_no_x_auth_token_for_cherrypy(self, api: Pepper) -> None:
+        """CherryPy backend authenticates via session cookie, not X-Auth-Token."""
         api.auth = {"token": "mysecrettoken"}
         responses.post(
             "https://salt-api.example.com:8000/",
@@ -351,7 +352,8 @@ class TestAuthHeaders:
         )
         api.req("/")
         req_headers = responses.calls[0].request.headers
-        assert req_headers.get("X-Auth-Token") == "mysecrettoken"
+        # X-Auth-Token should NOT be present — CherryPy uses session_id cookie
+        assert "X-Auth-Token" not in req_headers
 
     @responses.activate
     def test_content_type(self, api: Pepper) -> None:
@@ -365,3 +367,58 @@ class TestAuthHeaders:
         req_headers = responses.calls[0].request.headers
         assert req_headers.get("Content-Type") == "application/json"
         assert req_headers.get("Accept") == "application/json"
+
+
+# ── Alcali backend ──────────────────────────────────────────────────
+
+
+class TestPepperAlcali:
+    @responses.activate
+    def test_alcali_login(self) -> None:
+        api = Pepper("https://alcali.example.com:8443", backend="alcali")
+        jwt_response = {
+            "refresh": "eyJrefresh",
+            "access": "eyJaccess",
+            "username": "saltuser",
+            "id": 2,
+            "email": "robot@example.com",
+            "is_staff": True,
+        }
+        responses.post(
+            "https://alcali.example.com:8443/api/token/",
+            json=jwt_response,
+            status=200,
+        )
+
+        result = api.alcali_login("saltuser", "secret")
+        assert result["access"] == "eyJaccess"
+        assert api.auth["token"] == "eyJaccess"
+        assert api.auth["_login_method"] == "alcali_jwt"
+
+    @responses.activate
+    def test_alcali_login_failure(self) -> None:
+        api = Pepper("https://alcali.example.com:8443", backend="alcali")
+        responses.post(
+            "https://alcali.example.com:8443/api/token/",
+            status=401,
+        )
+        with pytest.raises(PepperException, match="Alcali authentication denied"):
+            api.alcali_login("bad", "creds")
+
+    @responses.activate
+    def test_alcali_login_sets_bearer(self) -> None:
+        api = Pepper("https://alcali.example.com:8443", backend="alcali")
+        responses.post(
+            "https://alcali.example.com:8443/api/token/",
+            json={"access": "my.jwt.token", "refresh": "r"},
+            status=200,
+        )
+        api.alcali_login("u", "p")
+        responses.get(
+            "https://alcali.example.com:8443/api/keys/",
+            json=[{"minion_id": "m1"}],
+            status=200,
+        )
+        api.req_get("/api/keys/")
+        req_headers = responses.calls[1].request.headers
+        assert req_headers.get("Authorization") == "Bearer my.jwt.token"
