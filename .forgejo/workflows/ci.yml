@@ -38,16 +38,27 @@ jobs:
       - uses: actions/checkout@v4
       - name: "Install test dependencies"
         run: |
-          # The runner uses a node:22-bookworm container that has Python 3.11
-          # but no python3-venv (ensurepip missing). Install system-wide since
-          # the container is ephemeral.
-          python3 -m pip install --break-system-packages \
-            hatchling click requests httpx pytest responses pytest-mock 2>&1 || \
-            echo "[WARN] pip install failed — dependencies unavailable"
+          # Runner uses node:22-bookworm Docker container. It has Python 3.11
+          # but not python3-pip or python3-venv. Install via apt first.
+          apt-get update -qq 2>/dev/null && apt-get install -y -qq python3-pip \
+            python3-hatchling python3-click python3-requests python3-pytest 2>&1 || \
+            echo "[WARN] apt install failed — trying pip fallback"
+          # Fallback: pip may be installed now via apt, try it
+          if ! python3 -c "import pytest" 2>/dev/null; then
+            pip3 install --break-system-packages \
+              hatchling click requests httpx pytest responses pytest-mock 2>&1 || \
+              echo "[WARN] pip install failed — dependencies unavailable"
+          fi
       - name: "Install package"
         run: |
-          python3 -m pip install --break-system-packages -e . 2>&1 || \
-            echo "[WARN] package install skipped"
+          if command -v pip3 >/dev/null 2>&1; then
+            pip3 install --break-system-packages -e . 2>&1
+            if [ $? -ne 0 ]; then
+              echo "[WARN] package install failed"
+            fi
+          else
+            echo "[SKIP] pip not available — package install skipped"
+          fi
       - name: "Run unit tests"
         run: |
           if python3 -c "import pytest" 2>/dev/null; then
