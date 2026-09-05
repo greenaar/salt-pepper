@@ -36,20 +36,22 @@ jobs:
     needs: [lint]
     steps:
       - uses: actions/checkout@v4
-      - name: "Install build dependencies"
+      - name: "Install test dependencies"
         run: |
-          python3 -m venv /tmp/ci-venv
-          /tmp/ci-venv/bin/pip install hatchling click requests httpx pytest responses pytest-mock 2>&1 || \
-            echo "[WARN] pip install failed (expected on no-internet runner)"
+          # The runner uses a node:22-bookworm container that has Python 3.11
+          # but no python3-venv (ensurepip missing). Install system-wide since
+          # the container is ephemeral.
+          python3 -m pip install --break-system-packages \
+            hatchling click requests httpx pytest responses pytest-mock 2>&1 || \
+            echo "[WARN] pip install failed — dependencies unavailable"
       - name: "Install package"
         run: |
-          if [ -f /tmp/ci-venv/bin/pip ]; then
-            /tmp/ci-venv/bin/pip install -e . 2>&1 || echo "[WARN] package install skipped"
-          fi
+          python3 -m pip install --break-system-packages -e . 2>&1 || \
+            echo "[WARN] package install skipped"
       - name: "Run unit tests"
         run: |
-          if [ -f /tmp/ci-venv/bin/pytest ]; then
-            /tmp/ci-venv/bin/pytest tests/unit/ -v --tb=short 2>&1
+          if python3 -c "import pytest" 2>/dev/null; then
+            python3 -m pytest tests/unit/ -v --tb=short 2>&1
           else
-            echo "[SKIP] pytest not available — no-internet runner"
+            echo "[SKIP] pytest not available"
           fi
