@@ -14,10 +14,10 @@ remote `salt-api` instance without needing Salt installed locally.
 
 ```bash
 # Via pip from release artifact (no git needed)
-pip install https://forge.thatserver.ca/agreengrass/salt-pepper/releases/download/v4.5.0/salt_pepper-4.5.0-py3-none-any.whl
+pip install https://github.com/greenaar/salt-pepper/releases/download/v4.5.0/salt_pepper-4.5.0-py3-none-any.whl
 
 # Or via git
-pip install git+ssh://git@forge.thatserver.ca:8222/agreengrass/salt-pepper.git@v4.5.0
+pip install git+https://github.com/greenaar/salt-pepper.git@v4.5.0
 
 # Or from source
 cd salt-pepper
