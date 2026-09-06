@@ -1452,6 +1452,55 @@ def setup() -> None:
     """Manage pepper configuration files."""
 
 
+def _prompt_ssh_key() -> str | None:
+    """Interactively prompt for an SSH key path.
+
+    If the user enters a directory path, list its contents and
+    loop back so they can pick a specific file.
+    """
+    while True:
+        raw = click.prompt(
+            "SSH identity file (optional, press Enter to skip, "
+            "or enter a directory to browse)",
+            default="",
+            show_default=False,
+        )
+        if not raw:
+            return None
+
+        expanded = os.path.expanduser(raw)
+        if os.path.isdir(expanded):
+            click.echo(f"  Contents of {raw}:")
+            try:
+                entries = sorted(
+                    e for e in os.listdir(expanded)
+                    if e.startswith("id_")
+                    or e.endswith((".pem", ".key", ".priv", ".pub"))
+                )
+                if entries:
+                    for e in entries:
+                        click.echo(f"    {e}")
+                else:
+                    # No matching files — show everything
+                    for e in sorted(os.listdir(expanded)):
+                        full = os.path.join(expanded, e)
+                        if os.path.isfile(full) and not e.startswith("."):
+                            click.echo(f"    {e}")
+                click.echo()
+                continue  # loop back for the filename
+            except PermissionError:
+                click.secho(f"  (no permission to read {raw})", fg="yellow")
+                continue
+        elif os.path.isfile(expanded):
+            return expanded
+        else:
+            click.secho(
+                f"  Path does not exist: {raw}",
+                fg="yellow",
+            )
+            continue
+
+
 @setup.command("init")
 def setup_init() -> None:
     """Generate a configuration file interactively."""
@@ -1496,11 +1545,7 @@ def setup_init() -> None:
         settings["ssh_bastion"] = click.prompt(
             "SSH bastion (user@host)",
         )
-        settings["ssh_key"] = click.prompt(
-            "SSH identity file (optional, press Enter to skip)",
-            default="",
-            show_default=False,
-        ) or None
+        settings["ssh_key"] = _prompt_ssh_key()
         settings["ssh_port"] = click.prompt(
             "SSH port",
             default=22,
