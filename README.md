@@ -12,10 +12,10 @@ remote `salt-api` instance without needing Salt installed locally.
 
 ```bash
 # Via pip from release artifact (no git needed)
-pip install https://forge.thatserver.ca/agreengrass/salt-pepper/releases/download/v4.2.0/salt_pepper-4.2.0-py3-none-any.whl
+pip install https://forge.thatserver.ca/agreengrass/salt-pepper/releases/download/v4.3.1/salt_pepper-4.3.1-py3-none-any.whl
 
 # Or via git
-pip install git+ssh://git@forge.thatserver.ca:8222/agreengrass/salt-pepper.git@v4.2.0
+pip install git+ssh://git@forge.thatserver.ca:8222/agreengrass/salt-pepper.git@v4.3.1
 
 # Or from source
 cd salt-pepper
@@ -114,7 +114,9 @@ pepper '*' test.ping
 
 **Setup wizard** (`pepper setup init`) asks whether to use a bastion at the
 end of the configuration prompts. If you answer no, bastion fields are
-omitted from the generated config.
+omitted from the generated config. When prompted for an SSH key path, you
+can enter a **directory** (e.g. ``~/.ssh``) to list its contents and then
+type the filename — no need to open a second terminal.
 
 **Verify** (`pepper setup verify`) displays bastion settings if configured
 and tests the tunnel as part of Step 1/3.
