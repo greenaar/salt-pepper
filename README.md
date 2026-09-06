@@ -1,7 +1,9 @@
 # salt-pepper — A modern CLI front-end for salt-api
 
-A rewrite of [saltstack/pepper](https://github.com/saltstack/pepper), which
-hasn't been updated in **8 years** (last meaningful commit ~2018).
+A modernised fork of [saltstack/pepper](https://github.com/saltstack/pepper) —
+the original was a well-crafted tool that served the Salt community for years,
+but its last meaningful update was around 2018. This rewrite brings it into
+the modern Python landscape while keeping the same familiar workflow.
 
 Pepper provides a Python library (`pepperlib`) and CLI script for accessing a
 remote `salt-api` instance without needing Salt installed locally.
@@ -36,17 +38,21 @@ export SALTAPI_EAUTH=pam
 pepper --non-interactive '*' test.ping
 ```
 
-The original pepper (`saltstack/pepper`) is frozen in time:
+The original pepper (`saltstack/pepper`) was built for an earlier era of Python
+and Salt. It served well, but the Python and Salt ecosystems have moved on:
 
-- **Python 2 compat deadweight** — still has `urllib2` fallback, `ConfigParser` compat shims, `raw_input`/`input` polyfills
-- **Deprecated `optparse`** — instead of `argparse` or `click`
-- **Mixed HTTP stack** — uses `urllib` for main calls, `requests` only for streaming/kerberos; duplicates error handling across two backends
-- **Python 2.5–3.6 classifiers** — ancient
-- **Travis CI / Azure Pipelines** — both dead CI platforms
-- **No pyproject.toml** — `setup.py` only, no modern packaging
-- **No type hints anywhere**
-- **No async support** — everything synchronous
-- **Salt 3000+ API features** — missing support for clients and parameters added since 2018
+- Python 2 is long retired — the compat shims (`urllib2` fallback, `ConfigParser`,
+  `raw_input` polyfills) add complexity without benefit
+- `optparse` was the right choice in 2014, but `click` is now the standard for
+  CLI tooling
+- The dual HTTP backend (`urllib` + `requests`) means error handling is
+  duplicated across two code paths
+- CI was configured for Travis CI and Azure Pipelines, both of which no longer
+  serve this project
+- Type hints, `pyproject.toml`, and modern packaging conventions make
+  maintenance and contribution easier
+- Salt itself has added new API features (queue client, metadata, JWT auth,
+  `tgt_type` aliasing) since the original was last updated
 
 ## Backends
 

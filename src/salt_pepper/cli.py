@@ -67,7 +67,80 @@ def _find_config(config_path: str | None) -> tuple[str, str]:
             fmt = "yaml" if path.endswith((".yml", ".yaml")) else "ini"
             return path, fmt
 
-    return os.path.join(home, ".pepperrc"), "ini"
+    return "", ""
+
+
+def _config_exists() -> bool:
+    """Check whether any pepper config file exists."""
+    path, _ = _find_config(None)
+    return bool(path) and os.path.exists(path)
+
+
+def _maybe_migrate_config() -> None:
+    """Check for old ``~/.pepperrc`` INI config and offer migration.
+
+    If the old INI file exists and no YAML config exists yet, ask
+    the user if they want to convert to YAML format.
+    """
+    home = os.path.expanduser("~")
+    old_ini = os.path.join(home, ".pepperrc")
+    new_yml = os.path.join(home, ".pepperrc.yml")
+
+    if not os.path.exists(old_ini) or os.path.exists(new_yml):
+        return
+
+    click.echo()
+    click.secho(
+        "╔══════════════════════════════════════════════════╗",
+        bold=True,
+    )
+    click.secho(
+        "║  Old-style config detected: ~/.pepperrc         ║",
+        bold=True,
+    )
+    click.secho(
+        "║  New YAML format supports profiles, backends,   ║",
+        bold=True,
+    )
+    click.secho(
+        "║  SSH bastion tunnels, and SSL configuration.    ║",
+        bold=True,
+    )
+    click.secho(
+        "╚══════════════════════════════════════════════════╝",
+        bold=True,
+    )
+    click.echo()
+
+    if not click.confirm("Migrate to YAML format?", default=True):
+        click.echo("Using old format. Run 'pepper setup init' later to upgrade.")
+        return
+
+    import shutil
+    import yaml
+
+    # Read old INI config
+    config = ConfigParser(interpolation=None)
+    config.read(old_ini)
+    yaml_data: dict[str, dict[str, Any]] = {}
+    for section in config.sections():
+        profile: dict[str, Any] = {}
+        for key, value in config.items(section):
+            profile[key.lower()] = value
+        yaml_data[section] = profile
+
+    try:
+        with open(new_yml, "w") as fh:
+            yaml.dump(yaml_data, fh, default_flow_style=False)
+        os.chmod(new_yml, 0o600)
+
+        # Only remove old file after new one is written successfully
+        os.remove(old_ini)
+
+        click.secho(f"✓ Migrated to {new_yml}", fg="green")
+        click.secho(f"  Old config ({old_ini}) removed.", fg="green")
+    except OSError as exc:
+        click.secho(f"✗ Migration failed: {exc}", fg="red", err=True)
 
 
 def _load_profile_yaml(config_path: str, profile: str) -> dict[str, str | None]:
@@ -126,12 +199,37 @@ def _load_profile(
     path, actual_fmt = _find_config(config_path)
     actual_fmt = fmt or actual_fmt
 
+    if not path or not actual_fmt:
+        return _empty_profile()
+
     if actual_fmt == "yaml":
         results = _load_profile_yaml(path, profile)
     else:
         results = _load_profile_ini(path, profile)
 
     # Environment overrides
+    _apply_env_overrides(results)
+
+    return results
+
+
+def _empty_profile() -> dict[str, str | None]:
+    """Return a profile dict with all defaults."""
+    return {
+        "SALTAPI_URL": None,
+        "SALTAPI_USER": None,
+        "SALTAPI_PASS": None,
+        "SALTAPI_EAUTH": "auto",
+        "BACKEND": "cherrypy",
+        "SSH_BASTION": None,
+        "SSH_KEY": None,
+        "SSH_PORT": "22",
+        "IGNORE_SSL_ERRORS": None,
+    }
+
+
+def _apply_env_overrides(results: dict[str, str | None]) -> None:
+    """Apply environment variable overrides to a profile dict."""
     env_map = {
         "SALTAPI_URL": "SALTAPI_URL",
         "SALTAPI_USER": "SALTAPI_USER",
@@ -880,6 +978,32 @@ def cli(
             except SystemExit:
                 pass
             return
+
+    # ── Config check ──
+    _maybe_migrate_config()
+
+    # ── No-config guard ──
+    # If no config file exists and the user hasn't provided enough
+    # information via CLI flags, show a helpful message instead of
+    # prompting for credentials and falling back to localhost:8000.
+    if (
+        not saltapi_url
+        and not username
+        and not password
+        and not _config_exists()
+        and ctx.invoked_subcommand is None
+    ):
+        click.echo()
+        click.secho("No configuration found.", fg="yellow", bold=True)
+        click.echo(
+            "  Run 'pepper setup init' to create a configuration file,"
+        )
+        click.echo(
+            "  or pass credentials via --username/--password/--saltapi-url."
+        )
+        click.echo()
+        ctx.exit(1)
+        return
 
     # ── Mutual exclusion ──
     fail_flags = [
