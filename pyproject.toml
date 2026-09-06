@@ -4,19 +4,19 @@ build-backend = "hatchling.build"
 
 [project]
 name = "salt-pepper"
-version = "4.5.0"
+version = "4.6.0"
 description = "A modern CLI front-end for salt-api"
 readme = "README.md"
 license = { text = "Apache-2.0" }
-requires-python = ">=3.9"
+requires-python = ">=3.10"
 
 authors = [
+    { name = "Aaron Greengrass", email = "aaron@greenbtn.com" },
     { name = "Seth House", email = "shouse@saltstack.com" },
 ]
 
 classifiers = [
     "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.9",
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
@@ -50,8 +50,8 @@ dev = [
 ]
 
 [project.urls]
-Homepage = "https://forge.thatserver.ca/agreengrass/salt-pepper"
-Source = "https://forge.thatserver.ca/agreengrass/salt-pepper"
+Homepage = "https://github.com/greenaar/salt-pepper"
+Source = "https://github.com/greenaar/salt-pepper"
 
 [project.scripts]
 pepper = "salt_pepper.script:main"

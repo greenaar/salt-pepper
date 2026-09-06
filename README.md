@@ -122,11 +122,16 @@ export PEPPER_SSH_PORT=2222
 pepper '*' test.ping
 ```
 
-**Setup wizard** (`pepper setup init`) asks whether to verify SSL
-certificates (default yes). Answer no for self-signed certs. It also asks
-about SSH bastion support. When prompted for an SSH key path, you can enter
-a **directory** (e.g. ``~/.ssh``) to list its contents and then type the
-filename — no need to open a second terminal.
+**Setup wizard** (`pepper setup init`) — if a config file already exists
+with profiles, shows them with masked secrets and lets you select one to
+edit, add a new one, or start fresh. Use ``-p`` / ``--profile`` to target a
+specific profile directly (creates it if missing, edits it if present).
+When editing, blank input keeps the previous value.
+
+The wizard asks whether to verify SSL certificates (default yes). Answer no
+for self-signed certs. It also asks about SSH bastion support. When prompted
+for an SSH key path, you can enter a **directory** (e.g. ``~/.ssh``) to
+list its contents and then type the filename.
 
 **Verify** (`pepper setup verify`) displays bastion settings if configured
 and tests the tunnel as part of Step 1/3.

@@ -1595,19 +1595,64 @@ def setup() -> None:
     """Manage pepper configuration files."""
 
 
-def _prompt_ssh_key() -> str | None:
+def _pick_or_create_profile(data: dict[str, object]) -> str:
+    """Let the user pick an existing profile or add a new one."""
+    profiles = list(data.keys())
+    if not profiles:
+        return click.prompt("Profile name", default="main")
+
+    click.echo()
+    click.secho("Existing profiles:", bold=True)
+    for i, name in enumerate(profiles, 1):
+        p = data[name]
+        pw = p.get("saltapi_pass", "") if isinstance(p, dict) else ""
+        masked = "****" if pw else "(no password)"
+        token = p.get("jwt_token", "") if isinstance(p, dict) else ""
+        tmasked = f", token:****" if token else ""
+        url = p.get("saltapi_url", "?") if isinstance(p, dict) else "?"
+        user = p.get("saltapi_user", "?") if isinstance(p, dict) else "?"
+        click.echo(f"  {i}. {name} \u2014 {user} @ {url} ({masked}{tmasked})")
+
+    click.echo(f"  {len(profiles) + 1}. Add a new profile")
+    click.echo(f"  {len(profiles) + 2}. Start fresh (overwrite all)")
+    click.echo()
+
+    while True:
+        try:
+            choice = click.prompt(
+                "Select", type=int, default=1,
+            )
+            if 1 <= choice <= len(profiles):
+                return profiles[choice - 1]
+            elif choice == len(profiles) + 1:
+                return click.prompt("New profile name", default="main")
+            elif choice == len(profiles) + 2:
+                if click.confirm("Overwrite all existing profiles?", default=False):
+                    return click.prompt("Profile name", default="main")
+                click.echo("Cancelled.")
+                continue
+            else:
+                click.secho(f"  Choose 1\u2013{len(profiles) + 2}.", fg="yellow")
+        except (ValueError, TypeError):
+            click.secho("  Enter a number.", fg="yellow")
+
+
+def _prompt_ssh_key(prev_value: str | None = None) -> str | None:
     """Interactively prompt for an SSH key path.
 
     If the user enters a directory path, list its contents and
     loop back so they can pick a specific file.
     """
     while True:
+        hint = f" [blank = keep: {prev_value}]" if prev_value else ""
         raw = click.prompt(
-            "SSH identity file (optional, press Enter to skip, "
-            "or enter a directory to browse)",
+            f"SSH identity file (optional, press Enter to skip, "
+            f"or enter a directory to browse){hint}",
             default="",
             show_default=False,
         )
+        if not raw and prev_value is not None:
+            return prev_value
         if not raw:
             return None
 
@@ -1624,93 +1669,159 @@ def _prompt_ssh_key() -> str | None:
                     for e in entries:
                         click.echo(f"    {e}")
                 else:
-                    # No matching files — show everything
                     for e in sorted(os.listdir(expanded)):
                         full = os.path.join(expanded, e)
                         if os.path.isfile(full) and not e.startswith("."):
                             click.echo(f"    {e}")
                 click.echo()
-                continue  # loop back for the filename
+                continue
             except PermissionError:
                 click.secho(f"  (no permission to read {raw})", fg="yellow")
                 continue
         elif os.path.isfile(expanded):
             return expanded
         else:
-            click.secho(
-                f"  Path does not exist: {raw}",
-                fg="yellow",
-            )
+            click.secho(f"  Path does not exist: {raw}", fg="yellow")
             continue
 
 
 @setup.command("init")
-def setup_init() -> None:
-    """Generate a configuration file interactively."""
-    import io
+@click.option(
+    "-p", "--profile", "profile_name",
+    default=None,
+    help="Profile name to edit or create. If omitted, interactively select.",
+)
+@click.pass_context
+def setup_init(ctx: click.Context, profile_name: str | None) -> None:
+    """Generate or edit a configuration file interactively.
+
+    If a config file already exists with profiles, displays them with
+    masked secrets and lets you select one to edit or add a new one.
+    Use ``--profile`` to skip the selection and directly edit or
+    create a named profile. Blank input = keep previous value.
+    """
     import getpass as _getpass
     import yaml
 
     click.echo()
-    click.secho("╔══════════════════════════════════════════╗", bold=True)
-    click.secho("║      salt-pepper configuration wizard    ║", bold=True)
-    click.secho("╚══════════════════════════════════════════╝", bold=True)
+    click.secho("\u2554\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2557", bold=True)
+    click.secho("\u2551      salt-pepper configuration wizard    \u2551", bold=True)
+    click.secho("\u255a\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u255d", bold=True)
     click.echo()
 
-    # Collect settings
-    settings: dict[str, Any] = {}
+    # Resolve config path
+    config_path = os.path.join(os.path.expanduser("~"), ".pepperrc.yml")
+    existing_data: dict[str, object] = {}
+    existing_config = os.path.exists(config_path)
 
-    click.secho("Backend type:", bold=True, fg="cyan")
-    click.echo("  cherrypy  — Standard Salt rest_cherrypy (port 8080)")
-    click.echo("  alcali    — Django REST API with JWT (port 8443)")
-    settings["backend"] = click.prompt(
-        "  Select backend", type=click.Choice(["cherrypy", "alcali"]),
-        default="cherrypy", show_choices=False,
-    )
+    if existing_config:
+        try:
+            with open(config_path) as fh:
+                existing_data = yaml.safe_load(fh) or {}
+        except Exception:
+            existing_data = {}
 
-    settings["saltapi_url"] = click.prompt(
-        "Salt API URL",
-        default="https://salt.example.com:8080",
-    )
-
-    settings["saltapi_user"] = click.prompt("Username")
-
-    settings["saltapi_pass"] = _getpass.getpass("Password (hidden): ")
-
-    settings["saltapi_eauth"] = click.prompt(
-        "EAuth backend",
-        default="pam",
-    )
-
-    # SSL verification (skip for self-signed certs)
-    settings["ignore_ssl_errors"] = not click.confirm(
-        "Verify SSL certificate?", default=True,
-    )
-
-    # SSH bastion (optional)
-    click.echo()
-    if click.confirm("Use SSH bastion/jumphost?", default=False):
-        settings["ssh_bastion"] = click.prompt(
-            "SSH bastion (user@host)",
-        )
-        settings["ssh_key"] = _prompt_ssh_key()
-        settings["ssh_port"] = click.prompt(
-            "SSH port",
-            default=22,
-            type=int,
-        )
+    # Determine profile name
+    if profile_name:
+        if isinstance(existing_data.get(profile_name), dict):
+            click.secho(f"Editing profile: {profile_name}", bold=True)
+        else:
+            click.secho(f"Creating new profile: {profile_name}", bold=True)
+    elif existing_data:
+        profile_name = _pick_or_create_profile(existing_data)
     else:
-        settings.setdefault("ssh_bastion", None)
+        profile_name = click.prompt("Profile name", default="main")
 
-    profile_name = click.prompt(
-        "Profile name",
-        default="main",
+    # Load existing values for this profile (if editing)
+    existing_profile: dict[str, object] = {}
+    if existing_data and isinstance(existing_data.get(profile_name), dict):
+        existing_profile = existing_data[profile_name]  # type: ignore[assignment]
+
+    def _prompt(
+        label: str,
+        key: str,
+        default: object = "",
+        secret: bool = False,
+        type_: type = str,
+    ) -> object:
+        """Prompt with blank = keep previous value."""
+        prev = existing_profile.get(key) if existing_profile else None
+        if prev is not None:
+            display = "****" if secret else str(prev)
+            hint = f" [blank = keep: {display}]"
+        else:
+            hint = ""
+        while True:
+            if secret:
+                raw = _getpass.getpass(f"{label}{hint}: ")
+            else:
+                raw = click.prompt(f"{label}{hint}", default="", show_default=False)
+            if not raw and prev is not None:
+                return prev
+            if not raw:
+                return default
+            try:
+                return type_(raw)
+            except (ValueError, TypeError):
+                click.secho(f"  Invalid value. Enter a {type_.__name__}.", fg="yellow")
+                continue
+
+    settings: dict[str, object] = {}
+
+    # Backend
+    prev_backend = existing_profile.get("backend", "cherrypy")
+    click.secho("Backend type:", bold=True, fg="cyan")
+    click.echo("  cherrypy  \u2014 Standard Salt rest_cherrypy (port 8080)")
+    click.echo("  alcali    \u2014 Django REST API with JWT (port 8443)")
+    settings["backend"] = click.prompt(
+        "  Select backend",
+        type=click.Choice(["cherrypy", "alcali"]),
+        default=str(prev_backend),
+        show_choices=False,
     )
 
-    config_path = click.prompt(
-        "Save to",
-        default=os.path.join(os.path.expanduser("~"), ".pepperrc.yml"),
+    settings["saltapi_url"] = _prompt(
+        "Salt API URL", "saltapi_url",
+        default=existing_profile.get("saltapi_url", "https://salt.example.com:8080"),
     )
+    settings["saltapi_user"] = _prompt(
+        "Username", "saltapi_user",
+        default=existing_profile.get("saltapi_user", ""),
+    )
+    settings["saltapi_pass"] = _prompt(
+        "Password", "saltapi_pass",
+        default="", secret=True,
+    )
+    settings["saltapi_eauth"] = _prompt(
+        "EAuth backend", "saltapi_eauth",
+        default=existing_profile.get("saltapi_eauth", "pam"),
+    )
+
+    # SSL verification
+    prev_ssl: bool = existing_profile.get("ignore_ssl_errors", False)  # type: ignore[assignment]
+    verify = click.confirm("Verify SSL certificate?", default=not prev_ssl)
+    settings["ignore_ssl_errors"] = not verify
+
+    # SSH bastion
+    click.echo()
+    prev_bastion = existing_profile.get("ssh_bastion")
+    use_bastion = click.confirm(
+        "Use SSH bastion/jumphost?",
+        default=bool(prev_bastion),
+    )
+    if use_bastion:
+        settings["ssh_bastion"] = _prompt(
+            "SSH bastion (user@host)", "ssh_bastion",
+            default=prev_bastion or "",
+        )
+        settings["ssh_key"] = _prompt_ssh_key(
+            existing_profile.get("ssh_key") if existing_profile else None,
+        )
+        settings["ssh_port"] = _prompt(
+            "SSH port", "ssh_port",
+            default=existing_profile.get("ssh_port", 22),
+            type_=int,
+        )
 
     # Test connection
     click.echo()
@@ -1719,38 +1830,36 @@ def setup_init() -> None:
         click.echo(f"  (via bastion: {settings['ssh_bastion']})")
     try:
         api = Pepper(
-            settings["saltapi_url"],
-            backend=settings["backend"],  # type: ignore[arg-type]
+            str(settings["saltapi_url"]),
+            backend=str(settings["backend"]),  # type: ignore[arg-type]
             ignore_ssl_errors=True,
             ssh_bastion=settings.get("ssh_bastion"),
             ssh_key=settings.get("ssh_key"),
-            ssh_port=settings.get("ssh_port", 22),
+            ssh_port=int(str(settings.get("ssh_port", 22))),
         )
         result = api.login(
-            settings["saltapi_user"],
-            settings["saltapi_pass"],
-            settings["saltapi_eauth"],
+            str(settings["saltapi_user"]),
+            str(settings["saltapi_pass"]),
+            str(settings["saltapi_eauth"]),
         )
         user = result.get("user", settings["saltapi_user"])
         perms = result.get("perms", [])
-        click.secho(f"✓ Authenticated as {user}", fg="green")
+        click.secho(f"\u2713 Authenticated as {user}", fg="green")
         if perms:
             click.echo(f"  Permissions: {', '.join(perms[:3])}")
         if len(perms) > 3:
             click.echo(f"  ... and {len(perms) - 3} more")
-
-        # Run test.ping to verify execution
         ping = api.low([{
             "client": "local", "tgt": "*", "fun": "test.ping",
         }])
         minions = ping.get("return", [{}])[0]
         if isinstance(minions, dict) and minions:
             up = sum(1 for v in minions.values() if v is True)
-            click.secho(f"✓ {up}/{len(minions)} minions responding", fg="green")
+            click.secho(f"\u2713 {up}/{len(minions)} minions responding", fg="green")
         else:
-            click.echo("  (no minion results — config file will still work)")
+            click.echo("  (no minion results \u2014 config file will still work)")
     except Exception as exc:
-        click.secho(f"✗ Connection failed: {exc}", fg="red", err=True)
+        click.secho(f"\u2717 Connection failed: {exc}", fg="red", err=True)
         click.echo()
         if not click.confirm("Save config anyway?", default=False):
             click.echo("Cancelled.")
@@ -1761,20 +1870,22 @@ def setup_init() -> None:
             click.echo("Cancelled.")
             return
 
-    # Write config
-    config_data = {profile_name: settings}
+    # Save (merge with existing profiles)
+    merged = dict(existing_data)
+    merged[profile_name] = settings
+
     try:
         with open(config_path, "w") as fh:
-            yaml.dump(config_data, fh, default_flow_style=False)
+            yaml.dump(merged, fh, default_flow_style=False)
         os.chmod(config_path, 0o600)
-        click.secho(f"✓ Saved to {config_path}", fg="green")
-        click.secho(
-            "  ⚠  Protect this file: passwords are stored in plain text.",
-            fg="yellow",
-        )
+        click.secho(f"\u2713 Saved profile '{profile_name}' to {config_path}", fg="green")
+        if not existing_config:
+            click.secho(
+                "  \u26a0  Protect this file: passwords are stored in plain text.",
+                fg="yellow",
+            )
     except OSError as exc:
-        click.secho(f"✗ Failed to write {config_path}: {exc}", fg="red", err=True)
-
+        click.secho(f"\u2717 Failed to write {config_path}: {exc}", fg="red", err=True)
 
 @setup.command("verify")
 @click.option(
