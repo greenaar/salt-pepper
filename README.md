@@ -12,10 +12,10 @@ remote `salt-api` instance without needing Salt installed locally.
 
 ```bash
 # Via pip from release artifact (no git needed)
-pip install https://forge.thatserver.ca/agreengrass/salt-pepper/releases/download/v4.3.1/salt_pepper-4.3.1-py3-none-any.whl
+pip install https://forge.thatserver.ca/agreengrass/salt-pepper/releases/download/v4.4.0/salt_pepper-4.4.0-py3-none-any.whl
 
 # Or via git
-pip install git+ssh://git@forge.thatserver.ca:8222/agreengrass/salt-pepper.git@v4.3.1
+pip install git+ssh://git@forge.thatserver.ca:8222/agreengrass/salt-pepper.git@v4.4.0
 
 # Or from source
 cd salt-pepper
@@ -96,6 +96,8 @@ main:
   saltapi_user: admin
   saltapi_pass: hunter2
   saltapi_eauth: pam
+  # SSL — set to true to skip verification (self-signed certs)
+  ignore_ssl_errors: false
   # SSH bastion — omit or set to null for direct connection
   ssh_bastion: user@bastion.example.com
   ssh_key: /home/user/.ssh/bastion_key   # optional, path to identity file
@@ -105,6 +107,8 @@ main:
 Or via environment variables:
 
 ```bash
+# SSL — set to "true" to skip verification
+export PEPPER_IGNORE_SSL_ERRORS=true
 # Optional — omit these for a direct connection
 export PEPPER_SSH_BASTION=user@bastion.example.com
 export PEPPER_SSH_KEY=~/.ssh/bastion_key
@@ -112,11 +116,11 @@ export PEPPER_SSH_PORT=2222
 pepper '*' test.ping
 ```
 
-**Setup wizard** (`pepper setup init`) asks whether to use a bastion at the
-end of the configuration prompts. If you answer no, bastion fields are
-omitted from the generated config. When prompted for an SSH key path, you
-can enter a **directory** (e.g. ``~/.ssh``) to list its contents and then
-type the filename — no need to open a second terminal.
+**Setup wizard** (`pepper setup init`) asks whether to verify SSL
+certificates (default yes). Answer no for self-signed certs. It also asks
+about SSH bastion support. When prompted for an SSH key path, you can enter
+a **directory** (e.g. ``~/.ssh``) to list its contents and then type the
+filename — no need to open a second terminal.
 
 **Verify** (`pepper setup verify`) displays bastion settings if configured
 and tests the tunnel as part of Step 1/3.

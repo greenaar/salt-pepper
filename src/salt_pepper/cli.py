@@ -90,6 +90,7 @@ def _load_profile_yaml(config_path: str, profile: str) -> dict[str, str | None]:
         "SSH_BASTION": profile_data.get("ssh_bastion"),
         "SSH_KEY": profile_data.get("ssh_key"),
         "SSH_PORT": profile_data.get("ssh_port", "22"),
+        "IGNORE_SSL_ERRORS": profile_data.get("ignore_ssl_errors"),
     }
     return results
 
@@ -105,6 +106,7 @@ def _load_profile_ini(config_path: str, profile: str) -> dict[str, str | None]:
         "SSH_BASTION": None,
         "SSH_KEY": None,
         "SSH_PORT": "22",
+        "IGNORE_SSL_ERRORS": None,
     }
     config = ConfigParser(interpolation=None)
     config.read(config_path)
@@ -139,6 +141,7 @@ def _load_profile(
         "SSH_BASTION": "PEPPER_SSH_BASTION",
         "SSH_KEY": "PEPPER_SSH_KEY",
         "SSH_PORT": "PEPPER_SSH_PORT",
+        "IGNORE_SSL_ERRORS": "PEPPER_IGNORE_SSL_ERRORS",
     }
     for key, env_name in env_map.items():
         env_val = os.environ.get(env_name)
@@ -650,6 +653,13 @@ def _pepper_config_from_params(params: dict) -> PepperConfig:
         or os.environ.get("SALTAPI_URL")
         or "https://localhost:8000"
     )
+    # SSL verification from profile/env (CLI flag was already applied above)
+    if not cfg.ignore_ssl:
+        profile_ssl = profile.get("IGNORE_SSL_ERRORS")
+        if profile_ssl is not None:
+            cfg.ignore_ssl = str(profile_ssl).lower() in ("true", "1", "yes")
+        elif os.environ.get("PEPPER_IGNORE_SSL_ERRORS", "").lower() in ("true", "1", "yes"):
+            cfg.ignore_ssl = True
     cfg.ssh_bastion = profile.get("SSH_BASTION") or os.environ.get("PEPPER_SSH_BASTION")
     cfg.ssh_key = profile.get("SSH_KEY") or os.environ.get("PEPPER_SSH_KEY")
     try:
@@ -901,7 +911,7 @@ def cli(
     cfg = PepperConfig()
     cfg.verbose = verbose
     cfg.debug_http = debug_http
-    cfg.ignore_ssl = ignore_ssl_errors
+    cfg.ignore_ssl = ignore_ssl_errors or False
     cfg.userun = run_uri
     cfg.mktoken = make_token
     cfg.cache = cache_path
@@ -934,6 +944,15 @@ def cli(
         or os.environ.get("SALTAPI_URL")
         or "https://localhost:8000"
     )
+    # SSL verification — CLI flag takes priority, fall back to profile/env
+    if not ignore_ssl_errors:
+        profile_ssl = profile.get("IGNORE_SSL_ERRORS")
+        if profile_ssl is not None:
+            cfg.ignore_ssl = str(profile_ssl).lower() in ("true", "1", "yes")
+        elif os.environ.get("PEPPER_IGNORE_SSL_ERRORS", "").lower() in ("true", "1", "yes"):
+            cfg.ignore_ssl = True
+    if cfg.ignore_ssl:
+        logger.info("SSL verification disabled")
     # SSH bastion tunnel config
     cfg.ssh_bastion = profile.get("SSH_BASTION") or os.environ.get("PEPPER_SSH_BASTION")
     cfg.ssh_key = profile.get("SSH_KEY") or os.environ.get("PEPPER_SSH_KEY")
@@ -1539,6 +1558,11 @@ def setup_init() -> None:
         default="pam",
     )
 
+    # SSL verification (skip for self-signed certs)
+    settings["ignore_ssl_errors"] = not click.confirm(
+        "Verify SSL certificate?", default=True,
+    )
+
     # SSH bastion (optional)
     click.echo()
     if click.confirm("Use SSH bastion/jumphost?", default=False):
@@ -1680,6 +1704,7 @@ def setup_verify(config_path: str | None, profile_name: str) -> None:
     ssh_bastion = profile.get("SSH_BASTION")
     ssh_key = profile.get("SSH_KEY")
     ssh_port = profile.get("SSH_PORT", "22")
+    ignore_ssl = profile.get("IGNORE_SSL_ERRORS", "False").lower() in ("true", "1", "yes")
 
     if not url:
         click.secho("✗ No SALTAPI_URL in config", fg="red", err=True)
@@ -1697,6 +1722,7 @@ def setup_verify(config_path: str | None, profile_name: str) -> None:
         if ssh_key:
             click.echo(f"  SSH key:     {ssh_key}")
         click.echo(f"  SSH port:    {ssh_port}")
+    click.echo(f"  SSL verify:  {'off' if ignore_ssl else 'on'}")
     click.echo()
 
     # Test connection
@@ -1707,7 +1733,7 @@ def setup_verify(config_path: str | None, profile_name: str) -> None:
         api = Pepper(
             url,
             backend=backend,  # type: ignore[arg-type]
-            ignore_ssl_errors=True,
+            ignore_ssl_errors=ignore_ssl,
             ssh_bastion=ssh_bastion,
             ssh_key=ssh_key,
             ssh_port=int(ssh_port) if ssh_port else 22,
