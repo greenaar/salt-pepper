@@ -273,7 +273,8 @@ def _build_lowstate(
             )
         low["tgt"] = target
         low["fun"] = command
-        low["tgt_type"] = expr_form
+        if expr_form:
+            low["tgt_type"] = expr_form
         if batch:
             low["batch"] = batch
         if args_list:
@@ -537,7 +538,7 @@ _SHARED_OPTS = [
     ),
     click.option(
         "-a", "--auth", "--eauth", "--extended-auth", "eauth",
-        default="auto",
+        default=None,
         help="External auth backend (pam, auto, kerberos, etc.).",
     ),
     click.option("--username", help="Salt API username."),
@@ -768,6 +769,7 @@ def cli(
     run_uri: bool,
     cache_path: str,
     jwt_token: str | None,
+    backend: str | None,
     verbose: int,
     debug_http: bool,
     ignore_ssl_errors: bool,
@@ -864,8 +866,25 @@ def cli(
     if client.startswith("local") and batch:
         client = "local_batch"
 
+    # Click.group with invoke_without_command=True and nargs=-1 doesn't
+    # properly parse options after positional args (known Click limitation).
+    # Strip any leaked options from extra_args before building lowstate.
+    _KNOWN_CLI_FLAGS: frozenset = frozenset({
+        "--non-interactive", "--debug-http", "--ignore-ssl-errors",
+        "--make-token", "--run-uri", "--json", "--json-file",
+        "--fail-incomplete", "--fail-any", "--fail-any-none",
+        "--fail-all", "--fail-all-none", "--output-file",
+        "-v", "-vv", "-vvv", "-vvvv",
+        "--username", "--password", "--auth", "--eauth",
+        "--extended-auth", "--backend", "--jwt",
+        "--saltapi-url", "--config", "--profile",
+        "--client", "--timeout", "--batch", "--master",
+        "--metadata", "--out", "-o", "-t", "-T", "-c", "-p", "-u", "-a", "-H",
+    })
+    filtered_args = tuple(a for a in extra_args if a not in _KNOWN_CLI_FLAGS)
+
     load = _build_lowstate(
-        ctx, client, target, command, extra_args, expr_form,
+        ctx, client, target, command, filtered_args, expr_form,
         batch, api, json_lowstate, metadata=parsed_metadata,
     )
 
@@ -913,6 +932,8 @@ def cli(
         ctx.exit(1)
     except KeyboardInterrupt:
         ctx.exit(0)
+    except click.exceptions.Exit:
+        raise  # ctx.exit() — let Click handle it
     except Exception as exc:
         click.echo(str(exc), err=True)
         click.echo(

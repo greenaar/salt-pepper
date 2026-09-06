@@ -14,9 +14,16 @@ def main() -> None:
     """Invoke the click CLI group."""
     try:
         cli()
+    except SystemExit:
+        raise  # Click uses SystemExit — let it pass through
     except Exception:
         logging.getLogger("pepper").debug(
             "Uncaught traceback:", exc_info=True
+        )
+        import click as _click
+        _click.secho(
+            f"Error: {sys.exc_info()[1]}",
+            err=True, fg="red",
         )
         sys.exit(1)
 
