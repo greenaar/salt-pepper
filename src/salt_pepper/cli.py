@@ -87,6 +87,9 @@ def _load_profile_yaml(config_path: str, profile: str) -> dict[str, str | None]:
         "SALTAPI_PASS": profile_data.get("saltapi_pass"),
         "SALTAPI_EAUTH": profile_data.get("saltapi_eauth", "auto"),
         "BACKEND": profile_data.get("backend", "cherrypy"),
+        "SSH_BASTION": profile_data.get("ssh_bastion"),
+        "SSH_KEY": profile_data.get("ssh_key"),
+        "SSH_PORT": profile_data.get("ssh_port", "22"),
     }
     return results
 
@@ -99,6 +102,9 @@ def _load_profile_ini(config_path: str, profile: str) -> dict[str, str | None]:
         "SALTAPI_PASS": None,
         "SALTAPI_EAUTH": "auto",
         "BACKEND": "cherrypy",
+        "SSH_BASTION": None,
+        "SSH_KEY": None,
+        "SSH_PORT": "22",
     }
     config = ConfigParser(interpolation=None)
     config.read(config_path)
@@ -130,6 +136,9 @@ def _load_profile(
         "SALTAPI_PASS": "SALTAPI_PASS",
         "SALTAPI_EAUTH": "SALTAPI_EAUTH",
         "BACKEND": "PEPPER_BACKEND",
+        "SSH_BASTION": "PEPPER_SSH_BASTION",
+        "SSH_KEY": "PEPPER_SSH_KEY",
+        "SSH_PORT": "PEPPER_SSH_PORT",
     }
     for key, env_name in env_map.items():
         env_val = os.environ.get(env_name)
@@ -167,20 +176,33 @@ class PepperConfig:
         )
         self.output_format: str = "json"
         self.jwt: str | None = None
+        self.ssh_bastion: str | None = None
+        self.ssh_key: str | None = None
+        self.ssh_port: int = 22
 
     def setup_logging(self) -> None:
         root = logging.getLogger()
+        # Remove any existing handlers to avoid duplicates
+        for h in root.handlers[:]:
+            root.removeHandler(h)
         handler = logging.StreamHandler(sys.stderr)
+        handler.setFormatter(logging.Formatter(
+            "%(levelname)s  %(message)s"
+        ))
         root.addHandler(handler)
         level = max(logging.ERROR - (self.verbose * 10), 1)
         root.setLevel(level)
 
     def build_api(self) -> Pepper:
+        logger.info("Connecting to %s (backend: %s)", self.api_url, self.backend)
         return Pepper(
             self.api_url,
             debug_http=self.debug_http,
             ignore_ssl_errors=self.ignore_ssl,
             backend=self.backend,  # type: ignore[arg-type]
+            ssh_bastion=self.ssh_bastion,
+            ssh_key=self.ssh_key,
+            ssh_port=self.ssh_port,
         )
 
 
@@ -628,6 +650,16 @@ def _pepper_config_from_params(params: dict) -> PepperConfig:
         or os.environ.get("SALTAPI_URL")
         or "https://localhost:8000"
     )
+    cfg.ssh_bastion = profile.get("SSH_BASTION") or os.environ.get("PEPPER_SSH_BASTION")
+    cfg.ssh_key = profile.get("SSH_KEY") or os.environ.get("PEPPER_SSH_KEY")
+    try:
+        cfg.ssh_port = int(
+            profile.get("SSH_PORT")
+            or os.environ.get("PEPPER_SSH_PORT")
+            or "22"
+        )
+    except (ValueError, TypeError):
+        cfg.ssh_port = 22
     cfg.api = cfg.build_api()
 
     _authenticate(
@@ -809,6 +841,36 @@ def cli(
     if ctx.invoked_subcommand is not None:
         return
 
+    # nargs=-1 on group arguments prevents Click from detecting
+    # subcommands when argv has target=setup, command=verify, etc.
+    # Check if the first arg matches a known subcommand and dispatch.
+    _SUBCMDS = frozenset({"run", "key", "event", "completions", "job", "setup"})
+    if command in _SUBCMDS:
+        sub_cmd = command
+        sub_args = [sub_cmd]
+    elif target in _SUBCMDS:
+        sub_cmd = target
+        sub_args = [sub_cmd] + ([command] if command else [])
+    else:
+        sub_cmd = None
+    
+    if sub_cmd is not None:
+        sub_args += list(extra_args)
+        cmd_obj = cli.get_command(ctx, sub_cmd)
+        if cmd_obj is not None:
+            ctx.invoked_subcommand = sub_cmd
+            # Parse and invoke the subcommand (a group like setup or key)
+            # with the remaining args
+            try:
+                cmd_obj.main(
+                    args=sub_args[1:],  # exclude the subcommand name itself
+                    parent=ctx,
+                    standalone_mode=False,
+                )
+            except SystemExit:
+                pass
+            return
+
     # ── Mutual exclusion ──
     fail_flags = [
         n
@@ -848,27 +910,49 @@ def cli(
     cfg.backend = backend or cfg.backend
     cfg.setup_logging()
 
+    if cfg.debug_http:
+        logger.info("Enabling HTTP debug logging")
+        try:
+            import http.client as _http_client
+            _http_client.HTTPConnection.debuglevel = 1
+            requests_log = logging.getLogger("requests.packages.urllib3")
+            requests_log.setLevel(logging.DEBUG)
+            requests_log.propagate = True
+        except Exception:
+            pass
+
     profile = _load_profile(config_path, profile_name)
+    logger.info(
+        "Config: %s profile=%s",
+        config_path or "~/.pepperrc.yml",
+        profile_name,
+    )
+
     cfg.api_url = (
         saltapi_url
         or profile.get("SALTAPI_URL")
         or os.environ.get("SALTAPI_URL")
         or "https://localhost:8000"
     )
+    # SSH bastion tunnel config
+    cfg.ssh_bastion = profile.get("SSH_BASTION") or os.environ.get("PEPPER_SSH_BASTION")
+    cfg.ssh_key = profile.get("SSH_KEY") or os.environ.get("PEPPER_SSH_KEY")
+    try:
+        cfg.ssh_port = int(
+            profile.get("SSH_PORT")
+            or os.environ.get("PEPPER_SSH_PORT")
+            or "22"
+        )
+    except (ValueError, TypeError):
+        cfg.ssh_port = 22
+    if cfg.ssh_bastion:
+        logger.info("SSH bastion: %s", cfg.ssh_bastion)
     cfg.api = cfg.build_api()
     api = cfg.api
 
-    _authenticate(cfg, username, password, eauth, non_interactive, token_expire, config_path)
-
-    # ── Parse input ──
-    json_lowstate = _parse_json_input(json_input, json_file)
-
-    if client.startswith("local") and batch:
-        client = "local_batch"
-
     # Click.group with invoke_without_command=True and nargs=-1 doesn't
-    # properly parse options after positional args (known Click limitation).
-    # Strip any leaked options from extra_args before building lowstate.
+    # properly parse --non-interactive when it appears after positional args.
+    # Detect it early since it affects authentication behavior.
     _KNOWN_CLI_FLAGS: frozenset = frozenset({
         "--non-interactive", "--debug-http", "--ignore-ssl-errors",
         "--make-token", "--run-uri", "--json", "--json-file",
@@ -881,7 +965,32 @@ def cli(
         "--client", "--timeout", "--batch", "--master",
         "--metadata", "--out", "-o", "-t", "-T", "-c", "-p", "-u", "-a", "-H",
     })
+    leaked_extra = [a for a in extra_args if a in _KNOWN_CLI_FLAGS]
+    if leaked_extra:
+        logger.info("Applying leaked CLI flags: %s", " ".join(leaked_extra))
+        for flag in leaked_extra:
+            if flag == "--non-interactive":
+                non_interactive = True
+            elif flag in ("-v", "-vv", "-vvv", "-vvvv"):
+                verbose = len(flag) - 1  # -v → 1, -vv → 2, etc.
+                cfg.verbose = verbose
+                cfg.setup_logging()
+            elif flag == "--debug-http":
+                debug_http = True
+                cfg.debug_http = True
+            elif flag == "--ignore-ssl-errors":
+                ignore_ssl_errors = True
+                cfg.ignore_ssl = True
     filtered_args = tuple(a for a in extra_args if a not in _KNOWN_CLI_FLAGS)
+
+    _authenticate(cfg, username, password, eauth, non_interactive, token_expire, config_path)
+    logger.info("Authenticated as %s (eauth: %s)", cfg.auth.get("user", "?"), eauth or "auto")
+
+    # ── Parse input ──
+    json_lowstate = _parse_json_input(json_input, json_file)
+
+    if client.startswith("local") and batch:
+        client = "local_batch"
 
     load = _build_lowstate(
         ctx, client, target, command, filtered_args, expr_form,
@@ -1330,6 +1439,228 @@ def kill(ctx: click.Context, jid: str) -> None:
         _output(result, None, fmt=cfg.output_format)
     except (PepperException, PepperAuthException) as exc:
         _handle_pepper_error(ctx, exc)
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# Subcommand: pepper setup (config initialization and verification)
+# Note: named "setup" not "config" to avoid conflict with the
+# --config option on the cli group.
+
+
+@cli.group()
+def setup() -> None:
+    """Manage pepper configuration files."""
+
+
+@setup.command("init")
+def setup_init() -> None:
+    """Generate a configuration file interactively."""
+    import io
+    import getpass as _getpass
+    import yaml
+
+    click.echo()
+    click.secho("╔══════════════════════════════════════════╗", bold=True)
+    click.secho("║      salt-pepper configuration wizard    ║", bold=True)
+    click.secho("╚══════════════════════════════════════════╝", bold=True)
+    click.echo()
+
+    # Collect settings
+    settings: dict[str, Any] = {}
+
+    click.secho("Backend type:", bold=True, fg="cyan")
+    click.echo("  cherrypy  — Standard Salt rest_cherrypy (port 8080)")
+    click.echo("  alcali    — Django REST API with JWT (port 8443)")
+    settings["backend"] = click.prompt(
+        "  Select backend", type=click.Choice(["cherrypy", "alcali"]),
+        default="cherrypy", show_choices=False,
+    )
+
+    settings["saltapi_url"] = click.prompt(
+        "Salt API URL",
+        default="https://salt.example.com:8080",
+    )
+
+    settings["saltapi_user"] = click.prompt("Username")
+
+    settings["saltapi_pass"] = _getpass.getpass("Password (hidden): ")
+
+    settings["saltapi_eauth"] = click.prompt(
+        "EAuth backend",
+        default="pam",
+    )
+
+    profile_name = click.prompt(
+        "Profile name",
+        default="main",
+    )
+
+    config_path = click.prompt(
+        "Save to",
+        default=os.path.join(os.path.expanduser("~"), ".pepperrc.yml"),
+    )
+
+    # Test connection
+    click.echo()
+    click.secho("Testing connection...", bold=True)
+    try:
+        api = Pepper(
+            settings["saltapi_url"],
+            backend=settings["backend"],  # type: ignore[arg-type]
+            ignore_ssl_errors=True,
+        )
+        result = api.login(
+            settings["saltapi_user"],
+            settings["saltapi_pass"],
+            settings["saltapi_eauth"],
+        )
+        user = result.get("user", settings["saltapi_user"])
+        perms = result.get("perms", [])
+        click.secho(f"✓ Authenticated as {user}", fg="green")
+        if perms:
+            click.echo(f"  Permissions: {', '.join(perms[:3])}")
+        if len(perms) > 3:
+            click.echo(f"  ... and {len(perms) - 3} more")
+
+        # Run test.ping to verify execution
+        ping = api.low([{
+            "client": "local", "tgt": "*", "fun": "test.ping",
+        }])
+        minions = ping.get("return", [{}])[0]
+        if isinstance(minions, dict) and minions:
+            up = sum(1 for v in minions.values() if v is True)
+            click.secho(f"✓ {up}/{len(minions)} minions responding", fg="green")
+        else:
+            click.echo("  (no minion results — config file will still work)")
+    except Exception as exc:
+        click.secho(f"✗ Connection failed: {exc}", fg="red", err=True)
+        click.echo()
+        if not click.confirm("Save config anyway?", default=False):
+            click.echo("Cancelled.")
+            return
+    else:
+        click.echo()
+        if not click.confirm("Save this configuration?", default=True):
+            click.echo("Cancelled.")
+            return
+
+    # Write config
+    config_data = {profile_name: settings}
+    try:
+        with open(config_path, "w") as fh:
+            yaml.dump(config_data, fh, default_flow_style=False)
+        os.chmod(config_path, 0o600)
+        click.secho(f"✓ Saved to {config_path}", fg="green")
+        click.secho(
+            "  ⚠  Protect this file: passwords are stored in plain text.",
+            fg="yellow",
+        )
+    except OSError as exc:
+        click.secho(f"✗ Failed to write {config_path}: {exc}", fg="red", err=True)
+
+
+@setup.command("verify")
+@click.option(
+    "-c", "--config", "config_path", default=None,
+    help="Config file path (default: ~/.pepperrc.yml).",
+)
+@click.option(
+    "-p", "--profile", "profile_name",
+    default=lambda: os.environ.get("PEPPERPROFILE", "main"),
+    help="Config profile (default: $PEPPERPROFILE or 'main').",
+)
+def setup_verify(config_path: str | None, profile_name: str) -> None:
+    """Verify a configuration file is valid.
+
+    Tests connection, authentication, and basic command execution.
+    """
+    import yaml
+
+    click.echo()
+    click.secho("Verifying configuration...", bold=True)
+
+    # Resolve config path
+    path = config_path or os.path.join(
+        os.path.expanduser("~"), ".pepperrc.yml"
+    )
+    ini_path = os.path.join(os.path.expanduser("~"), ".pepperrc")
+    local_path = ".pepperrc.yml"
+
+    for candidate in [config_path, local_path, path, ini_path]:
+        if candidate and os.path.exists(candidate):
+            path = candidate
+            break
+    else:
+        click.secho(f"✗ No config file found at {path}", fg="red", err=True)
+        return
+
+    click.secho(f"  Config file: {path}", bold=True)
+    click.secho(f"  Profile:     {profile_name}", bold=True)
+
+    try:
+        profile = _load_profile(path, profile_name)
+    except Exception as exc:
+        click.secho(f"✗ Failed to load config: {exc}", fg="red", err=True)
+        return
+
+    url = profile.get("SALTAPI_URL")
+    user = profile.get("SALTAPI_USER")
+    pw = profile.get("SALTAPI_PASS")
+    eauth = profile.get("SALTAPI_EAUTH", "auto")
+    backend = profile.get("BACKEND", "cherrypy")
+
+    if not url:
+        click.secho("✗ No SALTAPI_URL in config", fg="red", err=True)
+        return
+    if not user or not pw:
+        click.secho("✗ Missing SALTAPI_USER or SALTAPI_PASS", fg="red", err=True)
+        return
+
+    click.echo(f"  Backend:     {backend}")
+    click.echo(f"  URL:         {url}")
+    click.echo(f"  User:        {user}")
+    click.echo(f"  EAuth:       {eauth}")
+    click.echo()
+
+    # Test connection
+    click.secho("  Step 1/3: Connecting to salt-api...")
+    try:
+        api = Pepper(url, backend=backend, ignore_ssl_errors=True)  # type: ignore[arg-type]
+        click.secho("  ✓  Reachable", fg="green")
+    except Exception as exc:
+        click.secho(f"  ✗  {exc}", fg="red", err=True)
+        return
+
+    # Test authentication
+    click.secho("  Step 2/3: Authenticating...")
+    try:
+        result = api.login(user, pw, eauth)
+        perms = result.get("perms", [])
+        click.secho(f"  ✓  Authenticated as {result.get('user', user)}", fg="green")
+        if perms:
+            click.echo(f"     Permissions: {', '.join(perms[:4])}")
+    except Exception as exc:
+        click.secho(f"  ✗  {exc}", fg="red", err=True)
+        return
+
+    # Test command execution
+    click.secho("  Step 3/3: Running test.ping...")
+    try:
+        ping = api.low([{
+            "client": "local", "tgt": "*", "fun": "test.ping",
+        }])
+        minions = ping.get("return", [{}])[0]
+        if isinstance(minions, dict):
+            up = sum(1 for v in minions.values() if v is True)
+            click.secho(f"  ✓  {up}/{len(minions)} minions responded", fg="green")
+        else:
+            click.echo("  ?  Unexpected response format")
+    except Exception as exc:
+        click.secho(f"  ⚠  Command failed (but auth works): {exc}", fg="yellow")
+    else:
+        click.echo()
+
+    click.secho("✓ Configuration is valid", fg="green", bold=True)
 
 
 if __name__ == "__main__":

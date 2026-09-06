@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import logging
+import subprocess
 from typing import Any, Literal
 
 import requests
@@ -99,6 +100,9 @@ class Pepper:
         debug_http: bool = False,
         ignore_ssl_errors: bool = False,
         backend: BackendName = "cherrypy",
+        ssh_bastion: str | None = None,
+        ssh_key: str | None = None,
+        ssh_port: int = 22,
     ) -> None:
         """
         Initialize the class with the URL of the salt-api service.
@@ -109,6 +113,9 @@ class Pepper:
             ignore_ssl_errors: Skip SSL certificate verification.
             backend: ``"cherrypy"`` (standard rest_cherrypy) or
                      ``"alcali"`` (Django REST API).
+            ssh_bastion: SSH bastion host (``user@host``) to tunnel through.
+            ssh_key: Path to SSH identity file for bastion auth.
+            ssh_port: SSH port for the bastion (default: 22).
         """
         from urllib.parse import urlsplit
 
@@ -125,6 +132,105 @@ class Pepper:
         self.auth: dict[str, Any] = {}
         self.salt_version: str | None = None
         self._session_obj: requests.Session | None = None
+        self.ssh_bastion: str | None = ssh_bastion
+        self.ssh_key: str | None = ssh_key
+        self.ssh_port: int = ssh_port
+        self._tunnel_proc: subprocess.Popen[bytes] | None = None
+        self._tunnel_local_port: int | None = None
+
+        if self.ssh_bastion:
+            self._start_ssh_tunnel()
+
+    # ------------------------------------------------------------------
+    # SSH bastion tunnel
+    # ------------------------------------------------------------------
+
+    def _start_ssh_tunnel(self) -> None:
+        """Create an SSH local port forward through a bastion host.
+
+        Spawns ``ssh -L`` in the background and rewrites ``api_url``
+        to point at the local tunnel endpoint (``http://127.0.0.1:PORT``).
+        The SSH connection itself provides encryption end-to-end.
+        """
+        import socket
+        import subprocess
+        from urllib.parse import urlparse
+
+        # Allocate a free local port
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        sock.bind(("127.0.0.1", 0))
+        local_port = sock.getsockname()[1]
+        sock.close()
+
+        # Parse remote target from the original api_url
+        parsed = urlparse(self.api_url)
+        remote_host = parsed.hostname or "localhost"
+        remote_port = parsed.port or (443 if parsed.scheme == "https" else 80)
+
+        logger.info(
+            "SSH tunnel: %s → 127.0.0.1:%d → %s:%d",
+            self.ssh_bastion, local_port, remote_host, remote_port,
+        )
+
+        # Build SSH command
+        cmd: list[str] = [
+            "ssh", "-N",
+            "-L", f"127.0.0.1:{local_port}:{remote_host}:{remote_port}",
+            "-p", str(self.ssh_port),
+            "-o", "ExitOnForwardFailure=yes",
+            "-o", "StrictHostKeyChecking=accept-new",
+        ]
+        if self.ssh_key:
+            cmd += ["-i", self.ssh_key]
+        cmd.append(str(self.ssh_bastion))
+
+        try:
+            self._tunnel_proc = subprocess.Popen(
+                cmd,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.PIPE,
+            )
+        except FileNotFoundError:
+            raise PepperException(
+                "SSH binary not found — install openssh-client or set "
+                "PEPPER_SSH_BASTION to empty to skip tunnelling."
+            )
+
+        # Wait briefly for the tunnel to establish
+        import time
+        time.sleep(0.5)
+
+        if self._tunnel_proc.poll() is not None:
+            stderr = self._tunnel_proc.stderr.read() if self._tunnel_proc.stderr else b""
+            self._tunnel_proc = None
+            raise PepperException(
+                f"SSH tunnel failed: {stderr.decode('utf-8', errors='replace').strip()}"
+            )
+
+        self._tunnel_local_port = local_port
+        # Rewrite api_url to use the local tunnel (no SSL over loopback)
+        self.api_url = f"http://127.0.0.1:{local_port}"
+
+    def close(self) -> None:
+        """Explicitly close the SSH tunnel and HTTP session."""
+        if self._tunnel_proc:
+            logger.info("Stopping SSH tunnel")
+            try:
+                self._tunnel_proc.terminate()
+                self._tunnel_proc.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                self._tunnel_proc.kill()
+                self._tunnel_proc.wait(timeout=2)
+            except Exception:
+                pass
+            self._tunnel_proc = None
+            self._tunnel_local_port = None
+        if self._session_obj:
+            self._session_obj.close()
+            self._session_obj = None
+
+    def __del__(self) -> None:
+        self.close()
 
     # ------------------------------------------------------------------
     # Low-level HTTP helpers

@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "salt-pepper"
-version = "4.2.0"
+version = "4.3.0"
 description = "A modern CLI front-end for salt-api"
 readme = "README.md"
 license = { text = "Apache-2.0" }
@@ -82,3 +82,8 @@ strict = false
 check_untyped_defs = true
 ignore_missing_imports = true
 warn_unused_ignores = true
+
+[dependency-groups]
+dev = [
+    "pytest-asyncio>=1.2.0",
+]

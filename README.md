@@ -83,6 +83,37 @@ extraction needed. This is transparent — just authenticate normally.
 For `rest_tornado` (JWT mode), `X-Auth-Token` is still used — that backend follows a
 different protocol.
 
+### SSH bastion / jumphost
+
+If the salt-api is behind a bastion host, pepper can tunnel through it
+transparently. Set the bastion in your config file:
+
+```yaml
+main:
+  saltapi_url: https://salt-master.internal:8080
+  saltapi_user: admin
+  saltapi_pass: hunter2
+  saltapi_eauth: pam
+  ssh_bastion: user@bastion.example.com
+  ssh_key: /home/user/.ssh/bastion_key       # optional
+  ssh_port: 22                                # optional, default 22
+```
+
+Or via environment variables:
+
+```bash
+export PEPPER_SSH_BASTION=user@bastion.example.com
+export PEPPER_SSH_KEY=~/.ssh/bastion_key
+export PEPPER_SSH_PORT=2222
+pepper '*' test.ping
+```
+
+Pepper spawns ``ssh -L`` in the background, forwarding a random local port
+to the salt-api's host:port through the bastion. The tunnel is automatically
+torn down when the command completes. The SSH connection encrypts traffic
+end-to-end, so pepper uses ``http://127.0.0.1`` over the tunnel (the
+loopback hop is unencrypted but local to the machine).
+
 ## Clients & Features
 
 | Client | Method | Notes |
