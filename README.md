@@ -12,10 +12,10 @@ remote `salt-api` instance without needing Salt installed locally.
 
 ```bash
 # Via pip from release artifact (no git needed)
-pip install https://forge.thatserver.ca/agreengrass/salt-pepper/releases/download/v4.0.0/salt_pepper-4.0.0-py3-none-any.whl
+pip install https://forge.thatserver.ca/agreengrass/salt-pepper/releases/download/v4.2.0/salt_pepper-4.2.0-py3-none-any.whl
 
 # Or via git
-pip install git+ssh://git@forge.thatserver.ca:8222/agreengrass/salt-pepper.git@v4.0.0
+pip install git+ssh://git@forge.thatserver.ca:8222/agreengrass/salt-pepper.git@v4.2.0
 
 # Or from source
 cd salt-pepper
@@ -70,13 +70,13 @@ pepper --backend alcali '*' test.ping
 #   saltapi_url: https://salt.example.com:8443
 ```
 
-### Auth internals (why v4.0.0 matters)
+### Auth internals (session cookies vs X-Auth-Token)
 
 Salt's `rest_cherrypy` authenticates via **session cookies**, not `X-Auth-Token` headers.
 The original pepper extracted the token from login and sent it as `X-Auth-Token` on every
 subsequent request — but CherryPy ignores that header and returns 401.
 
-**v4.0.0 fix**: `requests.Session()` automatically stores the `session_id` cookie from
+**v4.0.0+ fix**: `requests.Session()` automatically stores the `session_id` cookie from
 the `/login` response and sends it on every follow-up request. No manual token
 extraction needed. This is transparent — just authenticate normally.
 
