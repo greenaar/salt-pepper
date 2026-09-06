@@ -83,10 +83,12 @@ extraction needed. This is transparent — just authenticate normally.
 For `rest_tornado` (JWT mode), `X-Auth-Token` is still used — that backend follows a
 different protocol.
 
-### SSH bastion / jumphost
+### SSH bastion / jumphost (optional)
 
 If the salt-api is behind a bastion host, pepper can tunnel through it
-transparently. Set the bastion in your config file:
+transparently. The bastion is **optional** — omit it to connect directly.
+
+Set the bastion in your config file:
 
 ```yaml
 main:
@@ -94,25 +96,49 @@ main:
   saltapi_user: admin
   saltapi_pass: hunter2
   saltapi_eauth: pam
+  # SSH bastion — omit or set to null for direct connection
   ssh_bastion: user@bastion.example.com
-  ssh_key: /home/user/.ssh/bastion_key       # optional
-  ssh_port: 22                                # optional, default 22
+  ssh_key: /home/user/.ssh/bastion_key   # optional, path to identity file
+  ssh_port: 22                            # optional, default 22
 ```
 
 Or via environment variables:
 
 ```bash
+# Optional — omit these for a direct connection
 export PEPPER_SSH_BASTION=user@bastion.example.com
 export PEPPER_SSH_KEY=~/.ssh/bastion_key
 export PEPPER_SSH_PORT=2222
 pepper '*' test.ping
 ```
 
+**Setup wizard** (`pepper setup init`) asks whether to use a bastion at the
+end of the configuration prompts. If you answer no, bastion fields are
+omitted from the generated config.
+
+**Verify** (`pepper setup verify`) displays bastion settings if configured
+and tests the tunnel as part of Step 1/3.
+
+### How the tunnel works
+
 Pepper spawns ``ssh -L`` in the background, forwarding a random local port
-to the salt-api's host:port through the bastion. The tunnel is automatically
-torn down when the command completes. The SSH connection encrypts traffic
+to the salt-api's host:port through the bastion:
+
+```
+ssh -N -L 127.0.0.1:PORT:REMOTE_HOST:REMOTE_PORT \
+    -o ExitOnForwardFailure=yes \
+    -o StrictHostKeyChecking=accept-new \
+    [-i KEY] [-p PORT] user@bastion
+```
+
+The tunnel is automatically torn down when the command completes (via
+``Pepper.close()`` / ``__del__``). The SSH connection encrypts traffic
 end-to-end, so pepper uses ``http://127.0.0.1`` over the tunnel (the
 loopback hop is unencrypted but local to the machine).
+
+**Error handling**: If the SSH binary is missing, the host is unreachable,
+or authentication fails, pepper raises a clear ``PepperException`` with the
+SSH stderr output — no silent hangs.
 
 ## Clients & Features
 

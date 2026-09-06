@@ -1490,6 +1490,25 @@ def setup_init() -> None:
         default="pam",
     )
 
+    # SSH bastion (optional)
+    click.echo()
+    if click.confirm("Use SSH bastion/jumphost?", default=False):
+        settings["ssh_bastion"] = click.prompt(
+            "SSH bastion (user@host)",
+        )
+        settings["ssh_key"] = click.prompt(
+            "SSH identity file (optional, press Enter to skip)",
+            default="",
+            show_default=False,
+        ) or None
+        settings["ssh_port"] = click.prompt(
+            "SSH port",
+            default=22,
+            type=int,
+        )
+    else:
+        settings.setdefault("ssh_bastion", None)
+
     profile_name = click.prompt(
         "Profile name",
         default="main",
@@ -1503,11 +1522,16 @@ def setup_init() -> None:
     # Test connection
     click.echo()
     click.secho("Testing connection...", bold=True)
+    if settings.get("ssh_bastion"):
+        click.echo(f"  (via bastion: {settings['ssh_bastion']})")
     try:
         api = Pepper(
             settings["saltapi_url"],
             backend=settings["backend"],  # type: ignore[arg-type]
             ignore_ssl_errors=True,
+            ssh_bastion=settings.get("ssh_bastion"),
+            ssh_key=settings.get("ssh_key"),
+            ssh_port=settings.get("ssh_port", 22),
         )
         result = api.login(
             settings["saltapi_user"],
@@ -1608,6 +1632,9 @@ def setup_verify(config_path: str | None, profile_name: str) -> None:
     pw = profile.get("SALTAPI_PASS")
     eauth = profile.get("SALTAPI_EAUTH", "auto")
     backend = profile.get("BACKEND", "cherrypy")
+    ssh_bastion = profile.get("SSH_BASTION")
+    ssh_key = profile.get("SSH_KEY")
+    ssh_port = profile.get("SSH_PORT", "22")
 
     if not url:
         click.secho("✗ No SALTAPI_URL in config", fg="red", err=True)
@@ -1620,12 +1647,26 @@ def setup_verify(config_path: str | None, profile_name: str) -> None:
     click.echo(f"  URL:         {url}")
     click.echo(f"  User:        {user}")
     click.echo(f"  EAuth:       {eauth}")
+    if ssh_bastion:
+        click.echo(f"  SSH bastion: {ssh_bastion}")
+        if ssh_key:
+            click.echo(f"  SSH key:     {ssh_key}")
+        click.echo(f"  SSH port:    {ssh_port}")
     click.echo()
 
     # Test connection
     click.secho("  Step 1/3: Connecting to salt-api...")
+    if ssh_bastion:
+        click.echo(f"           (via bastion: {ssh_bastion})")
     try:
-        api = Pepper(url, backend=backend, ignore_ssl_errors=True)  # type: ignore[arg-type]
+        api = Pepper(
+            url,
+            backend=backend,  # type: ignore[arg-type]
+            ignore_ssl_errors=True,
+            ssh_bastion=ssh_bastion,
+            ssh_key=ssh_key,
+            ssh_port=int(ssh_port) if ssh_port else 22,
+        )
         click.secho("  ✓  Reachable", fg="green")
     except Exception as exc:
         click.secho(f"  ✗  {exc}", fg="red", err=True)
