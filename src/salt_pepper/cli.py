@@ -317,7 +317,8 @@ def _parse_json_input(
 ) -> list[dict] | None:
     if inline:
         try:
-            return json.loads(inline)
+            data = json.loads(inline)
+            return _normalize_lowstate(data)
         except json.JSONDecodeError as exc:
             raise PepperArgumentsException(
                 f"Invalid JSON: {exc}"
@@ -325,7 +326,8 @@ def _parse_json_input(
     if filepath:
         try:
             with open(filepath) as fh:
-                return json.load(fh)
+                data = json.load(fh)
+                return _normalize_lowstate(data)
         except FileNotFoundError as exc:
             raise PepperArgumentsException(
                 f"Cannot open file: {filepath}"
@@ -335,6 +337,22 @@ def _parse_json_input(
                 f"Invalid JSON in {filepath}: {exc}"
             ) from exc
     return None
+
+
+def _normalize_lowstate(data: Any) -> list[dict]:
+    """Wrap a bare dict in a list so downstream can always iterate safely.
+
+    Salt's lowstate accepts both ``{"client": "local", ...}`` (a single
+    command) and ``[{"client": "local", ...}]`` (an array).  Pepper always
+    normalises to the list form.
+    """
+    if isinstance(data, list):
+        return data
+    if isinstance(data, dict):
+        return [data]
+    raise PepperArgumentsException(
+        "Lowstate must be a JSON object or array of objects"
+    )
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -1134,6 +1152,12 @@ def cli(
 
     if client.startswith("local") and batch:
         client = "local_batch"
+
+    # Runner/wheel clients don't need a target — if only one positional
+    # was given, treat it as the function name.
+    if target is not None and command is None and client.startswith(("runner", "wheel")):
+        command = target
+        target = None
 
     load = _build_lowstate(
         ctx, client, target, command, filtered_args, expr_form,

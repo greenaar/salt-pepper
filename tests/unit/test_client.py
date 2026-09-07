@@ -8,6 +8,8 @@ import pytest
 import responses
 
 from salt_pepper import Pepper, PepperException
+from salt_pepper.cli import _normalize_lowstate, _parse_json_input
+from salt_pepper.exceptions import PepperArgumentsException
 
 
 # ── Construction ────────────────────────────────────────────────────
@@ -422,3 +424,62 @@ class TestPepperAlcali:
         api.req_get("/api/keys/")
         req_headers = responses.calls[1].request.headers
         assert req_headers.get("Authorization") == "Bearer my.jwt.token"
+
+
+# ── Lowstate normalisation (Bug 1: dict vs list) ───────────────────
+
+
+class TestNormalizeLowstate:
+    def test_list_passthrough(self) -> None:
+        data = [{"client": "local", "tgt": "*", "fun": "test.ping"}]
+        result = _normalize_lowstate(data)
+        assert result == data
+        assert isinstance(result, list)
+
+    def test_dict_wraps_in_list(self) -> None:
+        data = {"client": "local", "tgt": "*", "fun": "test.ping"}
+        result = _normalize_lowstate(data)
+        assert result == [data]
+        assert isinstance(result, list)
+
+    def test_scalar_raises(self) -> None:
+        with pytest.raises(
+            PepperArgumentsException,
+            match="Lowstate must be a JSON object or array of objects",
+        ):
+            _normalize_lowstate("not a dict or list")
+
+    def test_none_list_element(self) -> None:
+        """Empty list is valid — no minions means nothing to do."""
+        assert _normalize_lowstate([]) == []
+
+
+class TestParseJsonInput:
+    def test_dict_input(self) -> None:
+        """--json '{"client":"local","tgt":"*","fun":"test.ping"}' should
+        normalise to list-of-dicts."""
+        result = _parse_json_input(
+            '{"client":"local","tgt":"*","fun":"test.ping"}', None
+        )
+        assert isinstance(result, list)
+        assert len(result) == 1
+        assert result[0]["client"] == "local"
+
+    def test_list_input(self) -> None:
+        """--json '[{"client":"local","tgt":"*","fun":"test.ping"}]' passes
+        through unchanged."""
+        result = _parse_json_input(
+            '[{"client":"local","tgt":"*","fun":"test.ping"}]', None
+        )
+        assert isinstance(result, list)
+        assert len(result) == 1
+        assert result[0]["client"] == "local"
+
+    def test_invalid_json(self) -> None:
+        with pytest.raises(
+            PepperArgumentsException, match="Invalid JSON"
+        ):
+            _parse_json_input("not json", None)
+
+    def test_none(self) -> None:
+        assert _parse_json_input(None, None) is None
