@@ -43,12 +43,11 @@ jobs:
           apt-get update -qq 2>/dev/null && apt-get install -y -qq python3-pip \
             python3-hatchling python3-click python3-requests python3-pytest 2>&1 || \
             echo "[WARN] apt install failed — trying pip fallback"
-          # Fallback: pip may be installed now via apt, try it
-          if ! python3 -c "import pytest" 2>/dev/null; then
-            pip3 install --break-system-packages \
-              hatchling click requests httpx pytest responses pytest-mock 2>&1 || \
-              echo "[WARN] pip install failed — dependencies unavailable"
-          fi
+          # Install test-only packages not available as Debian packages.
+          # This runs unconditionally — apt installs pytest but NOT responses.
+          pip3 install --break-system-packages \
+            responses pytest-mock 2>&1 || \
+            echo "[WARN] pip install (responses) failed — some tests may be skipped"
       - name: "Install package"
         run: |
           if command -v pip3 >/dev/null 2>&1; then
