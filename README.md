@@ -76,15 +76,29 @@ pepper --backend alcali '*' test.ping
 #   saltapi_url: https://salt.example.com:8443
 ```
 
-### Auth internals (session cookies vs X-Auth-Token)
+### Auth internals (how salt-api authentication works)
 
-Salt's `rest_cherrypy` authenticates via **session cookies**, not `X-Auth-Token` headers.
-The original pepper extracted the token from login and sent it as `X-Auth-Token` on every
-subsequent request — but CherryPy ignores that header and returns 401.
+Salt's `rest_cherrypy` netapi module itself does not handle authentication —
+it delegates to Salt's auth modules (PAM, `auto`, etc.). After a successful
+login at ``/login``, the server returns an auth token and sets a
+``session_id`` cookie.
 
-**v4.0.0+ fix**: `requests.Session()` automatically stores the `session_id` cookie from
-the `/login` response and sends it on every follow-up request. No manual token
-extraction needed. This is transparent — just authenticate normally.
+The token can be presented on subsequent requests in two ways, both handled
+by Salt's auth layer (not by CherryPy itself):
+
+1. **``X-Auth-Token`` header** — checked first and takes priority
+   (see `app.py#L863-L872
+   <https://github.com/saltstack/salt/blob/621251a7376f114e8a67eea323c637a94cefc917/salt/netapi/rest_cherrypy/app.py#L863-L872>`_)
+2. **``session_id`` cookie** — fallback if no ``X-Auth-Token`` is present
+
+The original pepper extracted the token from the login response but sent it
+as a URL or form parameter rather than as an ``X-Auth-Token`` header, so
+the auth layer never saw it and returned 401.
+
+**v4.0.0+ fix**: ``requests.Session()`` automatically stores the
+``session_id`` cookie from the ``/login`` response and sends it on every
+follow-up request. The token is still available in the response if you need
+to use ``X-Auth-Token`` directly (e.g. for scripting).
 
 For `rest_tornado` (JWT mode), `X-Auth-Token` is still used — that backend follows a
 different protocol.
