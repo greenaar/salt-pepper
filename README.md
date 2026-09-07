@@ -14,10 +14,10 @@ remote `salt-api` instance without needing Salt installed locally.
 
 ```bash
 # Via pip from release artifact (no git needed)
-pip install https://forge.thatserver.ca/agreengrass/salt-pepper/releases/download/v4.6.0/salt_pepper-4.6.0-py3-none-any.whl
+pip install https://forge.thatserver.ca/agreengrass/salt-pepper/releases/download/v4.7.0/salt_pepper-4.7.0-py3-none-any.whl
 
 # Or via git
-pip install git+ssh://git@forge.thatserver.ca:8222/agreengrass/salt-pepper.git@v4.6.0
+pip install git+ssh://git@forge.thatserver.ca:8222/agreengrass/salt-pepper.git@v4.7.0
 
 # Or from source
 cd salt-pepper
@@ -200,7 +200,7 @@ SSH stderr output — no silent hangs.
 | Async library interface (`AsyncPepper` via httpx) | ✅ |
 | Type hints (mypy checked) | ✅ |
 | Ruff linting | ✅ |
-| Unit test suite (mocked HTTP) | ✅ |
+| Unit test suite (mocked HTTP, 174 tests) | ✅ |
 | Forgejo Actions CI | ✅ |
 
 ## Roadmap — Future
