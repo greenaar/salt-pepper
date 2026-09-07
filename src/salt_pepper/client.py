@@ -213,7 +213,7 @@ class Pepper:
 
     def close(self) -> None:
         """Explicitly close the SSH tunnel and HTTP session."""
-        if self._tunnel_proc:
+        if hasattr(self, "_tunnel_proc") and self._tunnel_proc:
             logger.info("Stopping SSH tunnel")
             try:
                 self._tunnel_proc.terminate()
@@ -225,7 +225,7 @@ class Pepper:
                 pass
             self._tunnel_proc = None
             self._tunnel_local_port = None
-        if self._session_obj:
+        if hasattr(self, "_session_obj") and self._session_obj:
             self._session_obj.close()
             self._session_obj = None
 
