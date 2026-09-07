@@ -1,0 +1,70 @@
+name: "Release"
+
+on:
+  push:
+    tags: ['v*']
+
+jobs:
+  release:
+    name: "Build and publish"
+    runs-on: runner
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: "Install build tools"
+        run: |
+          # Runner uses node:22-bookworm — ensure pip is available
+          apt-get update -qq 2>/dev/null && apt-get install -y -qq python3-pip 2>&1 || true
+          pip3 install --break-system-packages hatchling build 2>&1 || \
+            echo "[WARN] build tools install failed"
+
+      - name: "Build sdist and wheel"
+        run: |
+          if command -v pip3 >/dev/null 2>&1 && python3 -m build --sdist --wheel 2>&1; then
+            echo "=== Build artifacts ==="
+            ls -la dist/
+          else
+            echo "[SKIP] build failed — no release assets"
+            exit 1
+          fi
+
+      - name: "Create release and upload assets"
+        env:
+          FORGEJO_TOKEN: ${{ secrets.FORGEJO_ACCESS_TOKEN }}
+        run: |
+          TAG="${{ github.ref_name }}"
+          REPO="${{ github.repository }}"
+          # Forgejo API — create release
+          API="https://forge.thatserver.ca/api/v1/repos/${REPO}/releases"
+          RESP=$(curl -sS -X POST "$API" \
+            -H "Authorization: token ${FORGEJO_TOKEN}" \
+            -H "Content-Type: application/json" \
+            -d "$(cat <<EOF
+          {
+            "tag_name": "${TAG}",
+            "name": "salt-pepper ${TAG}",
+            "body": "See the [changelog](https://forge.thatserver.ca/${REPO}/commits/${TAG}) for changes.",
+            "prerelease": false,
+            "draft": false
+          }
+          EOF
+          )")
+          RELEASE_ID=$(echo "$RESP" | python3 -c "import sys,json; print(json.load(sys.stdin).get('id',''))" 2>/dev/null)
+          if [ -z "$RELEASE_ID" ]; then
+            echo "Release creation failed:"
+            echo "$RESP"
+            exit 1
+          fi
+          echo "Release ID: $RELEASE_ID"
+          # Upload each asset
+          for FILE in dist/*; do
+            BASENAME=$(basename "$FILE")
+            echo "Uploading $BASENAME..."
+            curl -sS -X POST "${API}/${RELEASE_ID}/assets" \
+              -H "Authorization: token ${FORGEJO_TOKEN}" \
+              -F "attachment=@${FILE}" > /dev/null
+            echo "  done"
+          done
+          echo "=== Release URL ==="
+          echo "https://forge.thatserver.ca/${REPO}/releases/tag/${TAG}"
