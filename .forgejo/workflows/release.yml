@@ -14,10 +14,9 @@ jobs:
 
       - name: "Install build tools"
         run: |
-          # Runner uses node:22-bookworm — ensure pip is available
-          apt-get update -qq 2>/dev/null && apt-get install -y -qq python3-pip 2>&1 || true
-          pip3 install --break-system-packages hatchling build 2>&1 || \
-            echo "[WARN] build tools install failed"
+          apt-get update -qq 2>/dev/null && apt-get install -y -qq \
+            python3-pip python3-hatchling python3-build 2>&1 || \
+            echo "[WARN] apt install failed"
 
       - name: "Build sdist and wheel"
         run: |
