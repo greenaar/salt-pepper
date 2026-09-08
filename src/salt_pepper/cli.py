@@ -1711,9 +1711,10 @@ def _prompt_ssh_key(prev_value: str | None = None) -> str | None:
 
 @setup.command("init")
 @click.option(
-    "-p", "--profile", "profile_name",
+    "--profile", "profile_name",
     default=None,
-    help="Profile name to edit or create. If omitted, interactively select.",
+    help="Profile name to edit or create (from $PEPPERPROFILE or parent -p). "
+         "If omitted, interactively select.",
 )
 @click.pass_context
 def setup_init(ctx: click.Context, profile_name: str | None) -> None:
@@ -1727,10 +1728,15 @@ def setup_init(ctx: click.Context, profile_name: str | None) -> None:
     import getpass as _getpass
     import yaml
 
+    # Fall back to parent context's profile if our own option wasn't resolved
+    # (Click's inline subcommand dispatch can consume -p at the parent level)
+    if profile_name is None and ctx.parent is not None:
+        profile_name = ctx.parent.params.get("profile_name")
+
     click.echo()
-    click.secho("\u2554\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2557", bold=True)
+    click.secho("\u2554\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2557", bold=True)
     click.secho("\u2551      salt-pepper configuration wizard    \u2551", bold=True)
-    click.secho("\u255a\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u255d", bold=True)
+    click.secho("\u255a\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u255d", bold=True)
     click.echo()
 
     # Resolve config path
@@ -1805,7 +1811,7 @@ def setup_init(ctx: click.Context, profile_name: str | None) -> None:
     )
 
     settings["saltapi_url"] = _prompt(
-        "Salt API URL", "saltapi_url",
+        "Salt API URL (e.g. https://salt.example.com:8080)", "saltapi_url",
         default=existing_profile.get("saltapi_url", "https://salt.example.com:8080"),
     )
     settings["saltapi_user"] = _prompt(
@@ -1817,7 +1823,8 @@ def setup_init(ctx: click.Context, profile_name: str | None) -> None:
         default="", secret=True,
     )
     settings["saltapi_eauth"] = _prompt(
-        "EAuth backend", "saltapi_eauth",
+        "EAuth backend (pam, auto, kerberos, ldap, etc.)",
+        "saltapi_eauth",
         default=existing_profile.get("saltapi_eauth", "pam"),
     )
 
@@ -1917,7 +1924,7 @@ def setup_init(ctx: click.Context, profile_name: str | None) -> None:
     help="Config file path (default: ~/.pepperrc.yml).",
 )
 @click.option(
-    "-p", "--profile", "profile_name",
+    "--profile", "profile_name",
     default=lambda: os.environ.get("PEPPERPROFILE", "main"),
     help="Config profile (default: $PEPPERPROFILE or 'main').",
 )
