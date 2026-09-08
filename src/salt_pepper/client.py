@@ -208,8 +208,10 @@ class Pepper:
             )
 
         self._tunnel_local_port = local_port
-        # Rewrite api_url to use the local tunnel (no SSL over loopback)
-        self.api_url = f"http://127.0.0.1:{local_port}"
+        # Rewrite api_url to use the local tunnel, preserving the original
+        # scheme so requests performs the correct protocol handshake through
+        # the tunnel (HTTPS → TLS handshake, HTTP → plain text).
+        self.api_url = f"{parsed.scheme}://127.0.0.1:{local_port}"
 
     def close(self) -> None:
         """Explicitly close the SSH tunnel and HTTP session."""
