@@ -32,6 +32,11 @@ jobs:
         env:
           DEPLOY_TOKEN: ${{ secrets.TOKEN }}
         run: |
+          echo "Token length check: ${#DEPLOY_TOKEN} chars"
+          if [ ${#DEPLOY_TOKEN} -lt 10 ]; then
+            echo "ERROR: Token too short — secret might not be set"
+            exit 1
+          fi
           TAG="${{ github.ref_name }}"
           REPO="${{ github.repository }}"
           API="https://forge.thatserver.ca/api/v1/repos/${REPO}/releases"
