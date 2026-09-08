@@ -462,6 +462,7 @@ def _authenticate(
     non_interactive: bool,
     token_expire: int | None,
     config_path: str | None = None,
+    profile_name: str | None = None,
 ) -> None:
     api = cfg.api
     assert api is not None
@@ -471,7 +472,7 @@ def _authenticate(
         cfg.auth = api.auth
         return
 
-    profile = _load_profile(config_path, _profile_name())
+    profile = _load_profile(config_path, profile_name or _profile_name())
     resolved_user = username or profile.get("SALTAPI_USER")
     resolved_pass = password or profile.get("SALTAPI_PASS")
     resolved_eauth = eauth or profile.get("SALTAPI_EAUTH") or "auto"
@@ -634,7 +635,8 @@ def _resolve_config(ctx: click.Context) -> PepperConfig:
     # Resolve URL
     saltapi_url = p.get("saltapi_url")
     config_path = p.get("config_path")
-    profile = _load_profile(config_path, _profile_name())
+    profile_name_val = p.get("profile_name") or _profile_name()
+    profile = _load_profile(config_path, profile_name_val)
     cfg.api_url = (
         saltapi_url
         or profile.get("SALTAPI_URL")
@@ -653,6 +655,7 @@ def _resolve_config(ctx: click.Context) -> PepperConfig:
         p.get("non_interactive", False),
         p.get("token_expire"),
         config_path=config_path,
+        profile_name=profile_name_val,
     )
     return cfg
 
@@ -1144,7 +1147,7 @@ def cli(
                 cfg.ignore_ssl = True
     filtered_args = tuple(a for a in extra_args if a not in _KNOWN_CLI_FLAGS)
 
-    _authenticate(cfg, username, password, eauth, non_interactive, token_expire, config_path)
+    _authenticate(cfg, username, password, eauth, non_interactive, token_expire, config_path, profile_name)
     logger.info("Authenticated as %s (eauth: %s)", cfg.auth.get("user", "?"), eauth or "auto")
 
     # ── Parse input ──

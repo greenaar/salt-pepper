@@ -138,6 +138,15 @@ class Pepper:
         self._tunnel_proc: subprocess.Popen[bytes] | None = None
         self._tunnel_local_port: int | None = None
 
+        # Suppress urllib3 InsecureRequestWarning when SSL verification is off.
+        # This warning fires on every HTTPS request to 127.0.0.1 (SSH tunnel)
+        # or any host with a self-signed cert and is expected behaviour.
+        if ignore_ssl_errors:
+            import urllib3
+            urllib3.disable_warnings(
+                urllib3.exceptions.InsecureRequestWarning
+            )
+
         if self.ssh_bastion:
             self._start_ssh_tunnel()
 
@@ -208,10 +217,11 @@ class Pepper:
             )
 
         self._tunnel_local_port = local_port
-        # Rewrite api_url to use the local tunnel, preserving the original
-        # scheme so requests performs the correct protocol handshake through
-        # the tunnel (HTTPS → TLS handshake, HTTP → plain text).
-        self.api_url = f"{parsed.scheme}://127.0.0.1:{local_port}"
+        # Rewrite api_url to use the local tunnel.  The SSH connection
+        # provides encryption end-to-end, so the loopback hop is plain
+        # HTTP.  Using HTTPS to 127.0.0.1 would fail (no valid cert for
+        # 127.0.0.1) and triggers the InsecureRequestWarning.
+        self.api_url = f"http://127.0.0.1:{local_port}"
 
     def close(self) -> None:
         """Explicitly close the SSH tunnel and HTTP session."""
