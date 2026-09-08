@@ -30,14 +30,14 @@ jobs:
 
       - name: "Create release and upload assets"
         env:
-          FORGEJO_TOKEN: ${{ secrets.TOKEN }}
+          DEPLOY_TOKEN: ${{ secrets.TOKEN }}
         run: |
           TAG="${{ github.ref_name }}"
           REPO="${{ github.repository }}"
           # Forgejo API — create release
           API="https://forge.thatserver.ca/api/v1/repos/${REPO}/releases"
           RESP=$(curl -sS -X POST "$API" \
-            -H "Authorization: token ${FORGEJO_TOKEN}" \
+            -H "Authorization: token ${DEPLOY_TOKEN}" \
             -H "Content-Type: application/json" \
             -d "$(cat <<EOF
           {
@@ -61,7 +61,7 @@ jobs:
             BASENAME=$(basename "$FILE")
             echo "Uploading $BASENAME..."
             curl -sS -X POST "${API}/${RELEASE_ID}/assets" \
-              -H "Authorization: token ${FORGEJO_TOKEN}" \
+              -H "Authorization: token ${DEPLOY_TOKEN}" \
               -F "attachment=@${FILE}" > /dev/null
             echo "  done"
           done
