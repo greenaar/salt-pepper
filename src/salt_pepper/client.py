@@ -217,11 +217,13 @@ class Pepper:
             )
 
         self._tunnel_local_port = local_port
-        # Rewrite api_url to use the local tunnel.  The SSH connection
-        # provides encryption end-to-end, so the loopback hop is plain
-        # HTTP.  Using HTTPS to 127.0.0.1 would fail (no valid cert for
-        # 127.0.0.1) and triggers the InsecureRequestWarning.
-        self.api_url = f"http://127.0.0.1:{local_port}"
+        # Rewrite api_url to use the local tunnel, preserving the original
+        # scheme.  HTTPS to 127.0.0.1 works because the caller set
+        # ignore_ssl_errors=True (which disabled cert verification and
+        # suppressed the InsecureRequestWarning).  The SSH connection
+        # provides encryption end-to-end, but the remote salt-api may
+        # reject plain HTTP on its TLS port, so honour the original scheme.
+        self.api_url = f"{parsed.scheme}://127.0.0.1:{local_port}"
 
     def close(self) -> None:
         """Explicitly close the SSH tunnel and HTTP session."""
