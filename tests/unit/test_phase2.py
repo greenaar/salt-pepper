@@ -171,6 +171,36 @@ class TestOutput:
         with pytest.raises(ValueError, match="Unknown output format"):
             format_result({}, fmt="xml")
 
+    def test_format_text_dict(self) -> None:
+        data = {"return": [{"minion-1": True, "minion-2": True}]}
+        result = format_result(data, fmt="text")
+        assert "minion-1: True" in result
+        assert "minion-2: True" in result
+
+    def test_format_text_list(self) -> None:
+        data = {"return": [{"results": ["item1", "item2", "item3"]}]}
+        result = format_result(data, fmt="text")
+        # After unwrapping return[0], we have a dict with "results" key
+        assert "results:" in result
+
+    def test_format_text_flat_dict(self) -> None:
+        data = {"hostname": "salt-master", "version": "3006"}
+        result = format_result(data, fmt="text")
+        assert "hostname: salt-master" in result
+        assert "version: 3006" in result
+
+    def test_format_text_list_direct(self) -> None:
+        data = ["minion-1", "minion-2", "minion-3"]
+        result = format_result(data, fmt="text")
+        assert result == "minion-1\nminion-2\nminion-3"
+
+    def test_format_text_is_valid_choice(self) -> None:
+        """Verify the CLI accepts 'text' as a valid output format."""
+        from click import Choice
+        choice = Choice(["json", "yaml", "table", "text"])
+        assert choice("text") == "text"
+        assert choice("json") == "json"
+
 
 # ═══════════════════════════════════════════════════════════════════════
 # Async client

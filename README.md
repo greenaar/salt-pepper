@@ -14,10 +14,10 @@ remote `salt-api` instance without needing Salt installed locally.
 
 ```bash
 # Via pip from release artifact (no git needed)
-pip install https://forge.thatserver.ca/agreengrass/salt-pepper/releases/download/v4.8.1/salt_pepper-4.8.1-py3-none-any.whl
+pip install https://forge.thatserver.ca/agreengrass/salt-pepper/releases/download/v4.9.0/salt_pepper-4.9.0-py3-none-any.whl
 
 # Or via git
-pip install git+ssh://git@forge.thatserver.ca:8222/agreengrass/salt-pepper.git@v4.8.1
+pip install git+ssh://git@forge.thatserver.ca:8222/agreengrass/salt-pepper.git@v4.9.0
 
 # Or from source
 cd salt-pepper
@@ -204,6 +204,16 @@ SSH stderr output — no silent hangs.
 | Forgejo Actions CI | ✅ |
 
 ## Changelog
+
+### v4.9.0 — 2026-09-08
+
+- **New**: `--output` / `-o` flag now supports `text` format in addition to
+  `json`, `yaml`, and `table`. Text format renders key: value pairs and
+  list items line-by-line for easier CLI reading.
+- **Changed**: Setup wizard now asks about SSH bastion BEFORE SSL
+  verification. When SSH tunnelling is used, `ignore_ssl_errors` is
+  automatically set to `true` and the SSL question is skipped (the SSH
+  tunnel encrypts traffic end-to-end, and the loopback cert won't match).
 
 ### v4.8.1 — 2026-09-07
 
