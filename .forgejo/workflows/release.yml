@@ -28,16 +28,29 @@ jobs:
             exit 1
           fi
 
+      - name: "Diagnose token (debug)"
+        env:
+          MY_TOKEN: ${{ secrets.TOKEN }}
+        run: |
+          echo "=== Token diagnostics ==="
+          echo "secrets.TOKEN length: ${#MY_TOKEN}"
+          echo "auto FORGEJO_TOKEN length: ${#FORGEJO_TOKEN}"
+          echo "Server: $(curl -sS -o /dev/null -w '%{http_code}' -H 'Authorization: token ' https://forge.thatserver.ca/api/v1/version 2>&1 || echo fail)"
+          echo "=== Token test (GET repo) ==="
+          curl -sS -w "
+HTTP: %{http_code}" -X GET             "https://forge.thatserver.ca/api/v1/repos/${{ github.repository }}"             -H "Authorization: token ${MY_TOKEN}" | tail -3
+          echo ""
+
       - name: "Create release and upload assets"
         env:
-          DEPLOY_TOKEN: ${{ secrets.TOKEN }}
+          FORGEJO_TOKEN: ${{ secrets.TOKEN }}
         run: |
           TAG="${{ github.ref_name }}"
           REPO="${{ github.repository }}"
           API="https://forge.thatserver.ca/api/v1/repos/${REPO}/releases"
           # Create release via Forgejo API
           RESP=$(curl -sS -X POST "$API" \
-            -H "Authorization: token ${DEPLOY_TOKEN}" \
+            -H "Authorization: token ${FORGEJO_TOKEN}" \
             -H "Content-Type: application/json" \
             -d "$(cat <<EOF
           {
@@ -61,7 +74,7 @@ jobs:
             BASENAME=$(basename "$FILE")
             echo "Uploading $BASENAME..."
             curl -sS -X POST "${API}/${RELEASE_ID}/assets" \
-              -H "Authorization: token ${DEPLOY_TOKEN}" \
+              -H "Authorization: token ${FORGEJO_TOKEN}" \
               -F "attachment=@${FILE}" > /dev/null
             echo "  done"
           done
