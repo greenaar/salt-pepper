@@ -14,10 +14,10 @@ remote `salt-api` instance without needing Salt installed locally.
 
 ```bash
 # Via pip from release artifact (no git needed)
-pip install https://forge.thatserver.ca/agreengrass/salt-pepper/releases/download/v4.8.0/salt_pepper-4.8.0-py3-none-any.whl
+pip install https://forge.thatserver.ca/agreengrass/salt-pepper/releases/download/v4.8.1/salt_pepper-4.8.1-py3-none-any.whl
 
 # Or via git
-pip install git+ssh://git@forge.thatserver.ca:8222/agreengrass/salt-pepper.git@v4.8.0
+pip install git+ssh://git@forge.thatserver.ca:8222/agreengrass/salt-pepper.git@v4.8.1
 
 # Or from source
 cd salt-pepper
@@ -204,6 +204,15 @@ SSH stderr output — no silent hangs.
 | Forgejo Actions CI | ✅ |
 
 ## Changelog
+
+### v4.8.1 — 2026-09-07
+
+- **Fixed**: SSH bastion tunnel with HTTPS remotes — preserves original scheme through
+  the tunnel so TLS-only salt-api hosts don't reject plain HTTP
+- **Fixed**: `ignore_ssl_errors` now suppresses urllib3 `InsecureRequestWarning`
+  (was printing warning on every request with `verify=False`)
+- **Fixed**: `--profile` flag was ignored during authentication — the auth function
+  only read the `PEPPERPROFILE` env var, never the CLI `--profile` value
 
 ### v4.8.0 — 2026-09-07
 
