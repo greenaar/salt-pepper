@@ -37,7 +37,7 @@ jobs:
           API="https://forge.thatserver.ca/api/v1/repos/${REPO}/releases"
           # Create release via Forgejo API
           RESP=$(curl -sS -X POST "$API" \
-            -H "Authorization: Bearer ${DEPLOY_TOKEN}" \
+            -H "Authorization: token ${DEPLOY_TOKEN}" \
             -H "Content-Type: application/json" \
             -d "$(cat <<EOF
           {
@@ -61,7 +61,7 @@ jobs:
             BASENAME=$(basename "$FILE")
             echo "Uploading $BASENAME..."
             curl -sS -X POST "${API}/${RELEASE_ID}/assets" \
-              -H "Authorization: Bearer ${DEPLOY_TOKEN}" \
+              -H "Authorization: token ${DEPLOY_TOKEN}" \
               -F "attachment=@${FILE}" > /dev/null
             echo "  done"
           done
