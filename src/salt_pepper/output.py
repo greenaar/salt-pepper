@@ -37,6 +37,8 @@ def format_result(
         return _format_yaml(result, indent=indent)
     elif fmt == "table":
         return _format_table(result)
+    elif fmt == "text":
+        return _format_text(result)
     else:
         raise ValueError(f"Unknown output format: {fmt!r}")
 
@@ -137,3 +139,38 @@ def _dict_list_table(rows: list[dict[str, Any]]) -> str:
 
     lines.append(sep)
     return "\n".join(lines)
+
+
+def _format_text(result: Any) -> str:
+    """Render result as simple key: value text lines.
+
+    Best-effort: unwraps common salt-api response wrappers then
+    renders dicts as ``key: value`` lines and lists as one item
+    per line. Falls back to YAML for anything else.
+    """
+    data = result
+    if isinstance(data, dict):
+        if "return" in data:
+            data = data["return"]
+        if "data" in data:
+            data = data["data"]
+
+    # Unwrap single-element list from salt-api response wrappers
+    if isinstance(data, list) and len(data) == 1 and isinstance(data[0], dict):
+        data = data[0]
+
+    if isinstance(data, dict):
+        lines: list[str] = []
+        for k, v in data.items():
+            if isinstance(v, (dict, list)):
+                lines.append(f"{k}:")
+                for line in json.dumps(v, indent=2, default=str).split("\n"):
+                    lines.append(f"  {line}")
+            else:
+                lines.append(f"{k}: {v}")
+        return "\n".join(lines)
+
+    if isinstance(data, list):
+        return "\n".join(str(item) for item in data)
+
+    return str(data)

@@ -736,7 +736,7 @@ _SHARED_OPTS = [
     ),
     click.option(
         "-o", "--out", "output_format",
-        type=click.Choice(["json", "yaml", "table"]),
+        type=click.Choice(["json", "yaml", "table", "text"]),
         default="json", help="Output format.",
     ),
 ]
@@ -1831,12 +1831,7 @@ def setup_init(ctx: click.Context, profile_name: str | None) -> None:
         default=existing_profile.get("saltapi_eauth", "pam"),
     )
 
-    # SSL verification
-    prev_ssl: bool = existing_profile.get("ignore_ssl_errors", False)  # type: ignore[assignment]
-    verify = click.confirm("Verify SSL certificate?", default=not prev_ssl)
-    settings["ignore_ssl_errors"] = not verify
-
-    # SSH bastion
+    # SSH bastion — ask FIRST so we can skip SSL question if tunnelling
     click.echo()
     prev_bastion = existing_profile.get("ssh_bastion")
     use_bastion = click.confirm(
@@ -1856,6 +1851,15 @@ def setup_init(ctx: click.Context, profile_name: str | None) -> None:
             default=existing_profile.get("ssh_port", 22),
             type_=int,
         )
+        # When tunnelling through SSH, the loopback hop goes to 127.0.0.1
+        # and the remote cert won't match — disable SSL verification.
+        settings["ignore_ssl_errors"] = True
+        click.echo("  (SSL verification disabled — traffic encrypted by SSH tunnel)")
+    else:
+        # SSL verification — only relevant without an SSH tunnel
+        prev_ssl: bool = existing_profile.get("ignore_ssl_errors", False)  # type: ignore[assignment]
+        verify = click.confirm("Verify SSL certificate?", default=not prev_ssl)
+        settings["ignore_ssl_errors"] = not verify
 
     # Test connection
     click.echo()
