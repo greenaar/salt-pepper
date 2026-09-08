@@ -661,6 +661,70 @@ def _resolve_config(ctx: click.Context) -> PepperConfig:
 
 
 # ═══════════════════════════════════════════════════════════════════════
+# Custom Click group with sectioned help output
+# ═══════════════════════════════════════════════════════════════════════
+
+
+class _GroupedHelpGroup(click.Group):
+    """A Click group that formats options into labelled sections.
+
+    Subclass or assign ``option_group_sections`` as a list of
+    ``(section_title, [option_names...])``. Option names are matched
+    by the first long option (e.g. ``--config``) or by Python param name.
+    Unmatched options go into a default section.
+    """
+
+    option_group_sections: list[tuple[str, list[str]]] = []
+
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        sections = kwargs.pop("option_group_sections", None)
+        super().__init__(*args, **kwargs)
+        if sections is not None:
+            self.option_group_sections = sections
+
+    def format_options(self, ctx: click.Context, formatter: click.HelpFormatter) -> None:
+        """Override to group options by section."""
+        from collections import OrderedDict
+
+        all_params = list(self.get_params(ctx))
+        # Skip subcommand-name argument
+        params = [p for p in all_params if p.param_type_name != "argument"]
+
+        # Build lookup: long opt → param, name → param
+        seen: set[int] = set()
+        section_map: OrderedDict[str, list[click.Parameter]] = OrderedDict()
+
+        for title, opt_names in self.option_group_sections:
+            section_map[title] = []
+            for ref in opt_names:
+                for p in params:
+                    if id(p) in seen:
+                        continue
+                    # Match by long opt (e.g. --config) or param name
+                    opts = [o for o in p.opts if o.startswith("--")]
+                    if ref in opts or ref == p.name:
+                        section_map[title].append(p)
+                        seen.add(id(p))
+
+        # Unmatched params
+        unmatched = [p for p in params if id(p) not in seen]
+        if unmatched:
+            section_map.setdefault("Other options", unmatched)
+
+        for title, section_params in section_map.items():
+            if not section_params:
+                continue
+            rows: list[tuple[str, str]] = []
+            for p in section_params:
+                record = p.get_help_record(ctx)
+                if record:
+                    rows.append(record)
+            if rows:
+                with formatter.section(title):
+                    formatter.write_dl(rows)
+
+
+# ═══════════════════════════════════════════════════════════════════════
 # CLI — Root group
 # ═══════════════════════════════════════════════════════════════════════
 
@@ -737,7 +801,9 @@ _SHARED_OPTS = [
     click.option(
         "-o", "--out", "output_format",
         type=click.Choice(["json", "yaml", "table", "text"]),
-        default="json", help="Output format.",
+        default="json",
+        help="Output format: json, yaml, table, or text.  "
+             "Use 'text' for key: value lines (good for pipelines).",
     ),
 ]
 
@@ -819,7 +885,28 @@ def _handle_pepper_error(
 # ═══════════════════════════════════════════════════════════════════════
 
 
-@click.group(invoke_without_command=True)
+@click.group(invoke_without_command=True, cls=_GroupedHelpGroup,
+             option_group_sections=[
+                 ("Connection",
+                  ["--saltapi-url", "--config", "--profile", "--backend",
+                   "--ignore-ssl-errors"]),
+                 ("Authentication",
+                  ["--username", "--password", "--auth", "--eauth",
+                   "--non-interactive", "--token-expire", "--make-token",
+                   "--run-uri", "--cache", "--jwt"]),
+                 ("Output",
+                  ["--out", "--output-file", "--json", "--json-file",
+                   "--master"]),
+                 ("Execution",
+                  ["--timeout", "--client", "--batch", "--metadata",
+                   "--fail-incomplete", "--fail-any", "--fail-any-none",
+                   "--fail-all", "--fail-all-none",
+                   "--pcre", "--list", "--grain", "--grain-pcre",
+                   "--pillar", "--pillar-pcre", "--range", "--compound",
+                   "--nodegroup"]),
+                 ("Debug",
+                  ["--verbose", "--debug-http"]),
+             ])
 @_apply_shared_opts
 @click.option(
     "-t", "--timeout", type=int, default=60,
