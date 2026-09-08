@@ -34,8 +34,8 @@ jobs:
         run: |
           TAG="${{ github.ref_name }}"
           REPO="${{ github.repository }}"
-          # Forgejo API — create release
           API="https://forge.thatserver.ca/api/v1/repos/${REPO}/releases"
+          # Create release via Forgejo API
           RESP=$(curl -sS -X POST "$API" \
             -H "Authorization: Bearer ${DEPLOY_TOKEN}" \
             -H "Content-Type: application/json" \
