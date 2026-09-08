@@ -14,10 +14,10 @@ remote `salt-api` instance without needing Salt installed locally.
 
 ```bash
 # Via pip from release artifact (no git needed)
-pip install https://forge.thatserver.ca/agreengrass/salt-pepper/releases/download/v4.7.0/salt_pepper-4.7.0-py3-none-any.whl
+pip install https://forge.thatserver.ca/agreengrass/salt-pepper/releases/download/v4.8.0/salt_pepper-4.8.0-py3-none-any.whl
 
 # Or via git
-pip install git+ssh://git@forge.thatserver.ca:8222/agreengrass/salt-pepper.git@v4.7.0
+pip install git+ssh://git@forge.thatserver.ca:8222/agreengrass/salt-pepper.git@v4.8.0
 
 # Or from source
 cd salt-pepper
@@ -138,7 +138,7 @@ pepper '*' test.ping
 
 **Setup wizard** (`pepper setup init`) — if a config file already exists
 with profiles, shows them with masked secrets and lets you select one to
-edit, add a new one, or start fresh. Use ``-p`` / ``--profile`` to target a
+edit, add a new one, or start fresh. Use ``--profile`` to target a
 specific profile directly (creates it if missing, edits it if present).
 When editing, blank input keeps the previous value.
 
@@ -164,8 +164,8 @@ ssh -N -L 127.0.0.1:PORT:REMOTE_HOST:REMOTE_PORT \
 
 The tunnel is automatically torn down when the command completes (via
 ``Pepper.close()`` / ``__del__``). The SSH connection encrypts traffic
-end-to-end, so pepper uses ``http://127.0.0.1`` over the tunnel (the
-loopback hop is unencrypted but local to the machine).
+end-to-end, so pepper preserves the original URL scheme (``https``
+traffic gets a TLS handshake through the tunnel, ``http`` goes plain).
 
 **Error handling**: If the SSH binary is missing, the host is unreachable,
 or authentication fails, pepper raises a clear ``PepperException`` with the
@@ -202,6 +202,24 @@ SSH stderr output — no silent hangs.
 | Ruff linting | ✅ |
 | Unit test suite (mocked HTTP, 174 tests) | ✅ |
 | Forgejo Actions CI | ✅ |
+
+## Changelog
+
+### v4.8.0 — 2026-09-07
+
+- **Fixed**: `pepper setup init -p` flag now properly selects the target profile
+  (Click's inline dispatch was consuming `-p` at the parent level)
+- **Fixed**: `pepper setup verify --profile` works reliably (same dispatch fix)
+- **Improved**: Salt API URL prompt now shows format example
+  (`https://hostname:port`)
+- **Improved**: EAuth backend prompt now lists known options
+  (`pam, auto, kerberos, ldap, etc.`)
+- **Fixed**: SSH bastion tunnel preserves the original URL scheme — HTTPS
+  traffic through the tunnel now gets a proper TLS handshake instead of
+  being sent plain (fixes `RemoteDisconnected` errors when the remote
+  salt-api expects HTTPS)
+
+### v4.7.0 — Previous release
 
 ## Roadmap — Future
 
