@@ -1,7 +1,7 @@
 """
 Output formatters for salt-pepper results.
 
-Supports JSON, YAML, and a simple table format for list-style returns.
+Supports JSON, YAML, table (box-drawn), and text (pipe-aligned, no borders).
 """
 
 from __future__ import annotations
@@ -21,7 +21,7 @@ def format_result(
 
     Args:
         result: The parsed JSON response (dict or list).
-        fmt: Output format (``json``, ``yaml``, ``table``).
+        fmt: Output format (``json``, ``yaml``, ``table``, ``text``).
         sort_keys: Whether to sort dict keys (JSON only).
         indent: Indentation level (JSON and YAML).
 
@@ -59,70 +59,113 @@ def _format_yaml(result: Any, indent: int = 2) -> str:
     )
 
 
-def _format_table(result: Any) -> str:
-    """
-    Render result as a simple aligned table.
+# ── Helpers shared by table and text ─────────────────────────────────
 
-    Best-effort: only renders list-of-dict or dict-of-dict
-    structures. Falls back to YAML for anything else.
-    """
-    # Unwrap common salt-api response wrappers
-    data = result
+
+def _unwrap(data: Any) -> Any:
+    """Strip common salt-api response wrappers (return, data)."""
     if isinstance(data, dict):
         if "return" in data:
             data = data["return"]
         if "data" in data:
             data = data["data"]
-
-    # List of dicts → table
-    if isinstance(data, list) and data and isinstance(data[0], dict):
-        return _dict_list_table(data)
-
-    # Dict of dicts (minion → result) → table
-    if isinstance(data, dict):
-        values = list(data.values())
-        if values and isinstance(values[0], dict):
-            return _dict_list_table(
-                [{**v, "_key": k} for k, v in data.items()]
-            )
-
-    # Fallback
-    return _format_yaml(result)
+    return data
 
 
-def _dict_list_table(rows: list[dict[str, Any]]) -> str:
-    """Render a list of dicts as a column-aligned table."""
+def _flatten_mapping(data: Any) -> Any:
+    """Convert a name→value mapping into a list of row dicts.
+
+    Salt-api returns minion results as ``[{{name: result, …}}]`` — a list
+    containing one dict whose keys are minion IDs.  This helper detects that
+    shape and restructures it into tabular rows.
+
+    Examples
+    --------
+    ``[{{"m1": True, "m2": True}}]``
+        → ``[{{"minion": "m1", "return": True}}, {{"minion": "m2", "return": True}}]``
+
+    ``{{"m1": {{"id": 1, "up": True}}, "m2": {{"id": 2, "up": False}}}}``
+        → ``[{{"minion": "m1", "id": 1, "up": True}}, …]``
+    """
+    raw = _unwrap(data)
+
+    # Unwrap single-element list: [{"m1": ..., "m2": ...}] → {"m1": ..., "m2": ...}
+    if isinstance(raw, list) and len(raw) == 1 and isinstance(raw[0], dict):
+        raw = raw[0]
+
+    if not isinstance(raw, dict):
+        return raw  # not a mapping — pass through unchanged
+
+    # Check whether values look like minion results (all same type)
+    values = list(raw.values())
+    if not values:
+        return raw
+
+    # Dict of scalars → two-column table
+    if not any(isinstance(v, dict) for v in values):
+        return [
+            {"minion": k, "return": v}
+            for k, v in raw.items()
+        ]
+
+    # Dict of dicts → merge key into _minion column
+    if all(isinstance(v, dict) for v in values):
+        return [
+            {"minion": k, **v}
+            for k, v in raw.items()
+        ]
+
+    # Mixed types — pass through
+    return raw
+
+
+def _build_tabular(data: Any) -> list[dict[str, Any]]:
+    """Normalise *data* into a list of flat dicts for tabular rendering.
+
+    Passes through lists of plain dicts unchanged.  Detects and restructures
+    name→value mappings (the common salt-api minion-result shape).
+    """
+    rows = _flatten_mapping(data)
+
+    if isinstance(rows, list) and rows and isinstance(rows[0], dict):
+        return rows
+
+    # Fallback: wrap single item
+    if not isinstance(rows, list):
+        rows = [rows]
+
+    # Convert non-dict items
+    result: list[dict[str, Any]] = []
+    for item in rows:
+        if isinstance(item, dict):
+            result.append(item)
+        else:
+            result.append({"value": item})
+    return result
+
+
+# ── Table format (box-drawn) ─────────────────────────────────────────
+
+
+def _format_table(result: Any) -> str:
+    """Render result as a column-aligned table with box-drawn borders."""
+    rows = _build_tabular(result)
+    return _render_table(rows)
+
+
+def _render_table(rows: list[dict[str, Any]]) -> str:
+    """Render a list of dicts as a box-drawn table."""
     if not rows:
         return "(empty)"
 
-    # Collect columns in insertion order
-    columns: list[str] = []
-    seen = set()
-    for row in rows:
-        for key in row:
-            if key not in seen:
-                columns.append(str(key))
-                seen.add(key)
-
+    columns = _collect_columns(rows)
     if not columns:
         return "(empty)"
 
-    # Build stringified rows
-    str_rows: list[list[str]] = []
-    for row in rows:
-        srow: list[str] = [str(row.get(col, "")) for col in columns]
-        str_rows.append(srow)
-
-    # Compute column widths
-    col_widths = [len(c) for c in columns]
-    for srow in str_rows:
-        for i, val in enumerate(srow):
-            col_widths[i] = max(col_widths[i], len(val))
-
-    # Build separator
+    str_rows, col_widths = _stringify_rows(rows, columns)
     sep = "+" + "+".join("-" * (w + 2) for w in col_widths) + "+"
 
-    lines = [sep]
+    lines: list[str] = [sep]
     # Header
     header = "| " + " | ".join(
         c.ljust(col_widths[i]) for i, c in enumerate(columns)
@@ -130,9 +173,9 @@ def _dict_list_table(rows: list[dict[str, Any]]) -> str:
     lines.append(header)
     lines.append(sep.replace("-", "="))
 
-    # Rows
+    # Data rows
     for row_data in str_rows:
-        row_str: str = "| " + " | ".join(
+        row_str = "| " + " | ".join(
             row_data[i].ljust(col_widths[i]) for i in range(len(columns))
         ) + " |"
         lines.append(row_str)
@@ -141,36 +184,78 @@ def _dict_list_table(rows: list[dict[str, Any]]) -> str:
     return "\n".join(lines)
 
 
+# ── Text format (pipe-aligned, no borders) ────────────────────────────
+
+
 def _format_text(result: Any) -> str:
-    """Render result as simple key: value text lines.
+    """Render result as a pipe-aligned text table without box borders."""
+    rows = _build_tabular(result)
+    return _render_text(rows)
 
-    Best-effort: unwraps common salt-api response wrappers then
-    renders dicts as ``key: value`` lines and lists as one item
-    per line. Falls back to YAML for anything else.
-    """
-    data = result
-    if isinstance(data, dict):
-        if "return" in data:
-            data = data["return"]
-        if "data" in data:
-            data = data["data"]
 
-    # Unwrap single-element list from salt-api response wrappers
-    if isinstance(data, list) and len(data) == 1 and isinstance(data[0], dict):
-        data = data[0]
+def _render_text(rows: list[dict[str, Any]]) -> str:
+    """Render a list of dicts as a pipe-aligned text table (no borders)."""
+    if not rows:
+        return "(empty)"
 
-    if isinstance(data, dict):
-        lines: list[str] = []
-        for k, v in data.items():
-            if isinstance(v, (dict, list)):
-                lines.append(f"{k}:")
-                for line in json.dumps(v, indent=2, default=str).split("\n"):
-                    lines.append(f"  {line}")
-            else:
-                lines.append(f"{k}: {v}")
-        return "\n".join(lines)
+    columns = _collect_columns(rows)
+    if not columns:
+        return "(empty)"
 
-    if isinstance(data, list):
-        return "\n".join(str(item) for item in data)
+    str_rows, col_widths = _stringify_rows(rows, columns)
 
-    return str(data)
+    lines: list[str] = []
+    # Header
+    header = " | ".join(
+        c.ljust(col_widths[i]) for i, c in enumerate(columns)
+    )
+    lines.append(header)
+    # Separator (no special chars, just dashes)
+    lines.append("-+-".join("-" * w for w in col_widths))
+
+    # Data rows
+    for row_data in str_rows:
+        row_str = " | ".join(
+            row_data[i].ljust(col_widths[i]) for i in range(len(columns))
+        )
+        lines.append(row_str)
+
+    return "\n".join(lines)
+
+
+# ── Shared helpers ───────────────────────────────────────────────────
+
+
+def _collect_columns(rows: list[dict[str, Any]]) -> list[str]:
+    """Collect column names from a list of dicts, preserving insertion order."""
+    columns: list[str] = []
+    seen: set[str] = set()
+    for row in rows:
+        for key in row:
+            sk = str(key)
+            if sk not in seen:
+                columns.append(sk)
+                seen.add(sk)
+    return columns
+
+
+def _stringify_rows(
+    rows: list[dict[str, Any]], columns: list[str]
+) -> tuple[list[list[str]], list[int]]:
+    """Convert rows to stringified form and compute column widths."""
+    str_rows: list[list[str]] = []
+    col_widths = [len(c) for c in columns]
+
+    for row in rows:
+        srow: list[str] = []
+        for col in columns:
+            val = row.get(col, "")
+            if isinstance(val, (dict, list)):
+                val = json.dumps(val, default=str)
+            srow.append(str(val))
+            col_widths[len(srow) - 1] = max(
+                col_widths[len(srow) - 1], len(str(val))
+            )
+        str_rows.append(srow)
+
+    return str_rows, col_widths

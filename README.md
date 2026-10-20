@@ -205,6 +205,18 @@ SSH stderr output — no silent hangs.
 
 ## Changelog
 
+### v4.11.0 — 2026-10-20
+
+- **Fixed**: `--output table` now puts hostnames in the first column instead of
+  spreading them across column headers — no more 20-column-wide tables for a
+  handful of minions. Dict-of-dicts and flat-dict results both render cleanly.
+- **Fixed**: `--output text` now renders as a pipe-aligned tabular layout
+  (table without the box-drawn borders) instead of inline JSON. Nested results
+  are JSON-stringified into their cells.
+- **Changed**: Both `table` and `text` formats share a restructure step that
+  detects the common salt-api `{minion: result}` shape and normalises it to
+  row-oriented data with a `minion` column.
+
 ### v4.10.0 — 2026-10-20
 
 - **New**: `--version` flag now prints the pepper version

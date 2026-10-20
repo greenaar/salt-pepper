@@ -11,7 +11,7 @@ import responses
 from salt_pepper import Pepper
 from salt_pepper.client import construct_url, make_lowstate
 from salt_pepper.exceptions import PepperArgumentsException, PepperException
-from salt_pepper.output import _dict_list_table, _format_table, format_result
+from salt_pepper.output import _render_table, _format_table, format_result
 from salt_pepper.retcode import PepperRetcode
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -667,41 +667,43 @@ class TestFormatTableEdgeCases:
         assert "m1" in result
 
     def test_table_dict_of_dicts(self) -> None:
-        """minion → result dict of dicts becomes a table with _key column."""
+        """minion → result dict of dicts becomes a table with minion column."""
         data = {"m1": {"status": "up"}, "m2": {"status": "down"}}
         result = format_result(data, fmt="table")
         assert "m1" in result
         assert "m2" in result
-        assert "_key" in result
+        assert "minion" in result
         assert "up" in result
         assert "down" in result
 
     def test_table_dict_of_dicts_mixed_values(self) -> None:
-        """Non-dict values in a dict-of-dicts fall through."""
+        """Singleton dict of scalar becomes a two-column table."""
         data = {"m1": "just a string"}
         result = format_result(data, fmt="table")
-        # falls back to YAML
         assert "m1" in result
+        assert "just a string" in result
+        assert "minion" in result
+        assert "return" in result
 
     def test_table_empty_rows(self) -> None:
-        assert _dict_list_table([]) == "(empty)"
+        assert _render_table([]) == "(empty)"
 
     def test_table_single_row(self) -> None:
         rows = [{"name": "m1", "status": "up"}]
-        result = _dict_list_table(rows)
+        result = _render_table(rows)
         assert "+" in result
         assert "name" in result
         assert "m1" in result
 
     def test_table_empty_columns(self) -> None:
-        assert _dict_list_table([{}]) == "(empty)"
+        assert _render_table([{}]) == "(empty)"
 
     def test_table_mixed_keys(self) -> None:
         rows = [
             {"name": "m1", "status": "up"},
             {"name": "m2", "extra": "info"},
         ]
-        result = _dict_list_table(rows)
+        result = _render_table(rows)
         assert "name" in result
         assert "status" in result
         assert "extra" in result
