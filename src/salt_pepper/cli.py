@@ -801,10 +801,11 @@ _SHARED_OPTS = [
     ),
     click.option(
         "-o", "--out", "output_format",
-        type=click.Choice(["json", "yaml", "table", "text"]),
+        type=click.Choice(["json", "yaml", "table", "text", "csv"]),
         default="json",
-        help="Output format: json, yaml, table, or text.  "
-             "Use 'text' for key: value lines (good for pipelines).",
+        help="Output format: json, yaml, table, text, or csv.  "
+             "Use 'text' for space-aligned columns (good for pipelines).  "
+             "Use 'csv' for comma-separated values.",
     ),
 ]
 

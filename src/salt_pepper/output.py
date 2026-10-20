@@ -1,11 +1,14 @@
 """
 Output formatters for salt-pepper results.
 
-Supports JSON, YAML, table (box-drawn), and text (pipe-aligned, no borders).
+Supports JSON, YAML, table (box-drawn borders), text (space-aligned,
+no decorations), and CSV.
 """
 
 from __future__ import annotations
 
+import csv
+import io
 import json
 from typing import Any
 
@@ -21,7 +24,7 @@ def format_result(
 
     Args:
         result: The parsed JSON response (dict or list).
-        fmt: Output format (``json``, ``yaml``, ``table``, ``text``).
+        fmt: Output format (``json``, ``yaml``, ``table``, ``text``, ``csv``).
         sort_keys: Whether to sort dict keys (JSON only).
         indent: Indentation level (JSON and YAML).
 
@@ -39,6 +42,8 @@ def format_result(
         return _format_table(result)
     elif fmt == "text":
         return _format_text(result)
+    elif fmt == "csv":
+        return _format_csv(result)
     else:
         raise ValueError(f"Unknown output format: {fmt!r}")
 
@@ -59,7 +64,7 @@ def _format_yaml(result: Any, indent: int = 2) -> str:
     )
 
 
-# ── Helpers shared by table and text ─────────────────────────────────
+# ── Helpers shared by tabular formats ────────────────────────────────
 
 
 def _unwrap(data: Any) -> Any:
@@ -108,7 +113,7 @@ def _flatten_mapping(data: Any) -> Any:
             for k, v in raw.items()
         ]
 
-    # Dict of dicts → merge key into _minion column
+    # Dict of dicts → merge key into minion column
     if all(isinstance(v, dict) for v in values):
         return [
             {"minion": k, **v}
@@ -144,7 +149,42 @@ def _build_tabular(data: Any) -> list[dict[str, Any]]:
     return result
 
 
-# ── Table format (box-drawn) ─────────────────────────────────────────
+def _collect_columns(rows: list[dict[str, Any]]) -> list[str]:
+    """Collect column names from a list of dicts, preserving insertion order."""
+    columns: list[str] = []
+    seen: set[str] = set()
+    for row in rows:
+        for key in row:
+            sk = str(key)
+            if sk not in seen:
+                columns.append(sk)
+                seen.add(sk)
+    return columns
+
+
+def _stringify_rows(
+    rows: list[dict[str, Any]], columns: list[str]
+) -> tuple[list[list[str]], list[int]]:
+    """Convert rows to stringified form and compute column widths."""
+    str_rows: list[list[str]] = []
+    col_widths = [len(c) for c in columns]
+
+    for row in rows:
+        srow: list[str] = []
+        for col in columns:
+            val = row.get(col, "")
+            if isinstance(val, (dict, list)):
+                val = json.dumps(val, default=str)
+            srow.append(str(val))
+            col_widths[len(srow) - 1] = max(
+                col_widths[len(srow) - 1], len(str(val))
+            )
+        str_rows.append(srow)
+
+    return str_rows, col_widths
+
+
+# ── Table format (box-drawn borders) ─────────────────────────────────
 
 
 def _format_table(result: Any) -> str:
@@ -184,17 +224,18 @@ def _render_table(rows: list[dict[str, Any]]) -> str:
     return "\n".join(lines)
 
 
-# ── Text format (pipe-aligned, no borders) ────────────────────────────
+# ── Text format (space-aligned, no decorations) ──────────────────────
 
 
 def _format_text(result: Any) -> str:
-    """Render result as a pipe-aligned text table without box borders."""
+    """Render result as a space-aligned text table with no border or
+    separator characters."""
     rows = _build_tabular(result)
     return _render_text(rows)
 
 
 def _render_text(rows: list[dict[str, Any]]) -> str:
-    """Render a list of dicts as a pipe-aligned text table (no borders)."""
+    """Render a list of dicts as space-aligned columns with no decorations."""
     if not rows:
         return "(empty)"
 
@@ -205,17 +246,15 @@ def _render_text(rows: list[dict[str, Any]]) -> str:
     str_rows, col_widths = _stringify_rows(rows, columns)
 
     lines: list[str] = []
-    # Header
-    header = " | ".join(
+    # Header — no separator line, just column names
+    header = "  ".join(
         c.ljust(col_widths[i]) for i, c in enumerate(columns)
     )
     lines.append(header)
-    # Separator (no special chars, just dashes)
-    lines.append("-+-".join("-" * w for w in col_widths))
 
     # Data rows
     for row_data in str_rows:
-        row_str = " | ".join(
+        row_str = "  ".join(
             row_data[i].ljust(col_widths[i]) for i in range(len(columns))
         )
         lines.append(row_str)
@@ -223,39 +262,42 @@ def _render_text(rows: list[dict[str, Any]]) -> str:
     return "\n".join(lines)
 
 
-# ── Shared helpers ───────────────────────────────────────────────────
+# ── CSV format ───────────────────────────────────────────────────────
 
 
-def _collect_columns(rows: list[dict[str, Any]]) -> list[str]:
-    """Collect column names from a list of dicts, preserving insertion order."""
-    columns: list[str] = []
-    seen: set[str] = set()
+def _format_csv(result: Any) -> str:
+    """Render result as CSV with a header row."""
+    rows = _build_tabular(result)
+    return _render_csv(rows)
+
+
+def _render_csv(rows: list[dict[str, Any]]) -> str:
+    """Render a list of dicts as CSV."""
+    if not rows:
+        return "(empty)"
+
+    columns = _collect_columns(rows)
+    if not columns:
+        return "(empty)"
+
+    buf = io.StringIO()
+    writer = csv.writer(buf)
+
+    # Header
+    writer.writerow(columns)
+
+    # Data rows
     for row in rows:
-        for key in row:
-            sk = str(key)
-            if sk not in seen:
-                columns.append(sk)
-                seen.add(sk)
-    return columns
+        writer.writerow([
+            _csv_cell(row.get(col, ""))
+            for col in columns
+        ])
+
+    return buf.getvalue().rstrip("\r\n")
 
 
-def _stringify_rows(
-    rows: list[dict[str, Any]], columns: list[str]
-) -> tuple[list[list[str]], list[int]]:
-    """Convert rows to stringified form and compute column widths."""
-    str_rows: list[list[str]] = []
-    col_widths = [len(c) for c in columns]
-
-    for row in rows:
-        srow: list[str] = []
-        for col in columns:
-            val = row.get(col, "")
-            if isinstance(val, (dict, list)):
-                val = json.dumps(val, default=str)
-            srow.append(str(val))
-            col_widths[len(srow) - 1] = max(
-                col_widths[len(srow) - 1], len(str(val))
-            )
-        str_rows.append(srow)
-
-    return str_rows, col_widths
+def _csv_cell(val: Any) -> str:
+    """Convert a cell value to a CSV-safe string."""
+    if isinstance(val, (dict, list)):
+        return json.dumps(val, default=str)
+    return str(val)

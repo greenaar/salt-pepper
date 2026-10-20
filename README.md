@@ -205,6 +205,13 @@ SSH stderr output — no silent hangs.
 
 ## Changelog
 
+### v4.12.0 — 2026-10-20
+
+- **Fixed**: `--output text` now renders as space-aligned columns with *no*
+  decoration — no pipes, no dashes, no separator line. Clean for pipelines.
+- **New**: `--output csv` renders results as comma-separated values with a
+  header row (standard CSV quoting for commas/special chars).
+
 ### v4.11.0 — 2026-10-20
 
 - **Fixed**: `--output table` now puts hostnames in the first column instead of

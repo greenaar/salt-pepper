@@ -203,11 +203,12 @@ class TestOutput:
         assert "value" in result
 
     def test_format_text_is_valid_choice(self) -> None:
-        """Verify the CLI accepts 'text' as a valid output format."""
+        """Verify the CLI accepts 'text' and 'csv' as valid output formats."""
         from click import Choice
-        choice = Choice(["json", "yaml", "table", "text"])
+        choice = Choice(["json", "yaml", "table", "text", "csv"])
         assert choice("text") == "text"
         assert choice("json") == "json"
+        assert choice("csv") == "csv"
 
 
 # ═══════════════════════════════════════════════════════════════════════
