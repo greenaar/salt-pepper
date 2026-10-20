@@ -9,7 +9,7 @@ on:
 
 jobs:
   lint:
-    name: "Lint & syntax"
+    name: "Lint & type check"
     runs-on: runner
     steps:
       - uses: actions/checkout@v4
@@ -19,16 +19,28 @@ jobs:
           python3 --version
           echo "=== Compileall (stdlib syntax check) ==="
           python3 -m compileall -q src/ tests/
-          echo "=== SLS / YAML syntax check ==="
-          find . -name '*.yml' -o -name '*.yaml' | head -20
-      - name: "File structure check"
+      - name: "Install lint dependencies"
         run: |
-          echo "=== Project structure ==="
-          ls -la
-          echo "=== Source files ==="
-          find src/ -type f -name '*.py' | sort
-          echo "=== Test files ==="
-          find tests/ -type f -name '*.py' | sort
+          apt-get update -qq 2>/dev/null && apt-get install -y -qq \
+            python3-pip python3-hatchling 2>&1 || \
+            echo "[WARN] apt install failed"
+          pip3 install --break-system-packages \
+            ruff mypy types-requests 2>&1 || \
+            echo "[WARN] pip install failed"
+      - name: "Ruff check"
+        run: |
+          if command -v ruff >/dev/null 2>&1; then
+            ruff check src/ && echo "✓ Ruff passed" || echo "[WARN] Ruff found issues"
+          else
+            echo "[SKIP] ruff not available"
+          fi
+      - name: "Mypy check"
+        run: |
+          if command -v mypy >/dev/null 2>&1; then
+            mypy src/ && echo "✓ Mypy passed" || echo "[WARN] Mypy found issues"
+          else
+            echo "[SKIP] mypy not available"
+          fi
 
   test:
     name: "Tests"
@@ -42,29 +54,24 @@ jobs:
           # but not python3-pip or python3-venv. Install via apt first.
           apt-get update -qq 2>/dev/null && apt-get install -y -qq python3-pip \
             python3-hatchling python3-click python3-requests python3-pytest 2>&1 || \
-            echo "[WARN] apt install failed — trying pip fallback"
+            echo "[WARN] apt install failed"
           # Install test-only packages not available as Debian packages.
-          # This runs unconditionally — apt installs pytest but NOT responses.
           pip3 install --break-system-packages \
-            responses pytest-mock 2>&1 || \
-            echo "[WARN] pip install (responses) failed — some tests may be skipped"
+            responses pytest-mock pytest-asyncio 2>&1 || \
+            echo "[WARN] pip install failed"
       - name: "Install package"
         run: |
           if command -v pip3 >/dev/null 2>&1; then
             pip3 install --break-system-packages -e . 2>&1
-            if [ $? -ne 0 ]; then
-              echo "[WARN] package install failed"
-            fi
           else
-            echo "[SKIP] pip not available — package install skipped"
+            echo "[SKIP] pip not available"
+            exit 1
           fi
       - name: "Run unit tests"
         run: |
-          # Check that the test dependencies (especially 'responses') are available
           if python3 -c "import pytest, responses" 2>/dev/null; then
-            python3 -m pytest tests/unit/ -v --tb=short 2>&1 || echo "[WARN] some tests failed"
-          elif python3 -c "import pytest" 2>/dev/null; then
-            echo "[SKIP] missing 'responses' library — cannot run tests (no-internet runner)"
+            python3 -m pytest tests/unit/ -v --tb=short 2>&1
           else
-            echo "[SKIP] pytest not available"
+            echo "[SKIP] missing dependencies"
+            exit 1
           fi

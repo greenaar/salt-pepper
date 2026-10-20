@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "salt-pepper"
-version = "4.9.1"
+version = "4.10.0"
 description = "A modern CLI front-end for salt-api"
 readme = "README.md"
 license = { text = "Apache-2.0" }
@@ -44,6 +44,7 @@ kerberos = ["requests-gssapi>=1.1.0"]
 dev = [
     "pytest>=7",
     "pytest-mock>=3",
+    "pytest-asyncio>=1.2.0",
     "responses>=0.23",
     "ruff>=0.3",
     "mypy>=1.8",
@@ -69,7 +70,7 @@ addopts = "--showlocals -ra"
 asyncio_mode = "auto"
 
 [tool.ruff]
-target-version = "py39"
+target-version = "py310"
 line-length = 100
 src = ["src"]
 
@@ -83,7 +84,3 @@ check_untyped_defs = true
 ignore_missing_imports = true
 warn_unused_ignores = true
 
-[dependency-groups]
-dev = [
-    "pytest-asyncio>=1.2.0",
-]

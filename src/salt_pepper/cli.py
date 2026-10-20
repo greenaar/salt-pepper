@@ -28,6 +28,7 @@ from typing import Any
 import click
 
 from salt_pepper import Pepper
+from salt_pepper import __version__ as _pepper_version
 from salt_pepper.exceptions import (
     PepperArgumentsException,
     PepperAuthException,
@@ -815,58 +816,6 @@ def _apply_shared_opts(fn: Any) -> Any:
     return fn
 
 
-def _pepper_config_from_params(params: dict) -> PepperConfig:
-    """Build PepperConfig from a flat param dict (reused by subcommands)."""
-    cfg = PepperConfig()
-    cfg.verbose = params.get("verbose", 0)
-    cfg.debug_http = params.get("debug_http", False)
-    cfg.ignore_ssl = params.get("ignore_ssl_errors", False)
-    cfg.userun = params.get("run_uri", False)
-    cfg.mktoken = params.get("make_token", False)
-    cfg.cache = params.get("cache_path") or cfg.cache
-    cfg.output_format = params.get("output_format") or "json"
-    cfg.jwt = params.get("jwt_token")
-    cfg.backend = params.get("backend") or cfg.backend
-    cfg.setup_logging()
-
-    saltapi_url = params.get("saltapi_url")
-    config_path = params.get("config_path")
-    profile = _load_profile(config_path, _profile_name())
-    cfg.api_url = (
-        saltapi_url
-        or profile.get("SALTAPI_URL")
-        or os.environ.get("SALTAPI_URL")
-        or "https://localhost:8000"
-    )
-    # SSL verification from profile/env (CLI flag was already applied above)
-    if not cfg.ignore_ssl:
-        profile_ssl = profile.get("IGNORE_SSL_ERRORS")
-        if profile_ssl is not None:
-            cfg.ignore_ssl = str(profile_ssl).lower() in ("true", "1", "yes")
-        elif os.environ.get("PEPPER_IGNORE_SSL_ERRORS", "").lower() in ("true", "1", "yes"):
-            cfg.ignore_ssl = True
-    cfg.ssh_bastion = profile.get("SSH_BASTION") or os.environ.get("PEPPER_SSH_BASTION")
-    cfg.ssh_key = profile.get("SSH_KEY") or os.environ.get("PEPPER_SSH_KEY")
-    try:
-        cfg.ssh_port = int(
-            profile.get("SSH_PORT")
-            or os.environ.get("PEPPER_SSH_PORT")
-            or "22"
-        )
-    except (ValueError, TypeError):
-        cfg.ssh_port = 22
-    cfg.api = cfg.build_api()
-
-    _authenticate(
-        cfg,
-        params.get("username"),
-        params.get("password"),
-        params.get("eauth", "auto"),
-        params.get("non_interactive", False),
-        params.get("token_expire"),
-        config_path=config_path,
-    )
-    return cfg
 
 
 # ── Error handler ──
@@ -908,6 +857,7 @@ def _handle_pepper_error(
                   ["--verbose", "--debug-http"]),
              ])
 @_apply_shared_opts
+@click.version_option(version=_pepper_version or "unknown", prog_name="pepper")
 @click.option(
     "-t", "--timeout", type=int, default=60,
     help="Command timeout in seconds (default: 60).",
@@ -1069,7 +1019,7 @@ def cli(
         sub_args = [sub_cmd] + ([command] if command else [])
     else:
         sub_cmd = None
-    
+
     if sub_cmd is not None:
         sub_args += list(extra_args)
         cmd_obj = cli.get_command(ctx, sub_cmd)
@@ -1722,7 +1672,7 @@ def _pick_or_create_profile(data: dict[str, object]) -> str:
         pw = p.get("saltapi_pass", "") if isinstance(p, dict) else ""
         masked = "****" if pw else "(no password)"
         token = p.get("jwt_token", "") if isinstance(p, dict) else ""
-        tmasked = f", token:****" if token else ""
+        tmasked = ", token:****" if token else ""
         url = p.get("saltapi_url", "?") if isinstance(p, dict) else "?"
         user = p.get("saltapi_user", "?") if isinstance(p, dict) else "?"
         click.echo(f"  {i}. {name} \u2014 {user} @ {url} ({masked}{tmasked})")

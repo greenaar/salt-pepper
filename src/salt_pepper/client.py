@@ -203,7 +203,7 @@ class Pepper:
             raise PepperException(
                 "SSH binary not found — install openssh-client or set "
                 "PEPPER_SSH_BASTION to empty to skip tunnelling."
-            )
+            ) from None
 
         # Wait briefly for the tunnel to establish
         import time

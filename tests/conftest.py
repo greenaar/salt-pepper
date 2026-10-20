@@ -16,9 +16,4 @@ def api() -> Pepper:
 
 
 def pytest_configure(config: Any) -> None:
-    """Disable tests that require a live salt-api."""
-    config.addinivalue_line(
-        "markers",
-        "integration: marks tests that require a running salt-api "
-        "(deselect with '-m \"not integration\"')",
-    )
+    """Configure pytest for salt-pepper unit tests."""

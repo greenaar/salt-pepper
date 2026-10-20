@@ -205,6 +205,17 @@ SSH stderr output — no silent hangs.
 
 ## Changelog
 
+### v4.10.0 — 2026-10-20
+
+- **New**: `--version` flag now prints the pepper version
+- **Fixed**: `ruff.target-version` now matches `requires-python` (py39 → py310)
+- **Fixed**: Removed orphaned `tests/requirements.txt` (all deps live in pyproject.toml)
+- **Fixed**: Eliminated duplicate `[dependency-groups]` in pyproject.toml (pytest-asyncio merged into `[project.optional-dependencies] dev`)
+- **Fixed**: Removed dead `_pepper_config_from_params()` function (~50 lines of unreferenced code)
+- **Fixed**: Removed dangling `integration` test marker — no integration tests exist
+- **Fixed**: README project structure now reflects actual files (drops `auth.py`, `config.py`, `types.py`, `integration/`; adds `async_client.py`, `retcode.py`, `script.py`, `release.yml`)
+- **Improved**: CI now runs `ruff check` and `mypy` in the lint job instead of basic file listing
+
 ### v4.9.1 — 2026-09-08
 
 - **Improved**: `--help` output now groups options into labelled sections
@@ -256,27 +267,28 @@ SSH stderr output — no silent hangs.
 
 ## Project Structure
 
-```
-salt-pepper/
-├── src/
-│   └── salt_pepper/          # (renamed from pepper/)
-│       ├── __init__.py        # version, public API
-│       ├── client.py          # Pepper class — HTTP client to salt-api
-│       ├── cli.py             # CLI entry points (click groups)
-│       ├── auth.py            # Auth providers (PAM, JWT, kerberos, etc.)
-│       ├── config.py          # Config loader (YAML or env)
-│       ├── exceptions.py      # Custom exceptions
-│       ├── output.py          # Output formatting (JSON, YAML, table, nested)
-│       └── types.py           # Typed dicts for lowstate payloads
-├── tests/
-│   ├── unit/                  # Mocked HTTP tests
-│   └── integration/           # Against a real/nearby salt-api
-├── pyproject.toml
-├── .forgejo/
-│   └── workflows/
-│       └── ci.yml
-└── README.md
-```
+|```
+|salt-pepper/
+|├── src/
+|│   └── salt_pepper/
+|│       ├── __init__.py        # version, public API
+|│       ├── client.py          # Pepper class — sync HTTP client to salt-api
+|│       ├── async_client.py    # AsyncPepper class — async client via httpx
+|│       ├── cli.py             # CLI entry points (click groups)
+|│       ├── exceptions.py      # Custom exceptions
+|│       ├── output.py          # Output formatting (JSON, YAML, table, text)
+|│       ├── retcode.py         # Retcode validation (fail-any, fail-all, etc.)
+|│       └── script.py          # Entry point module for `pepper` command
+|├── tests/
+|│   ├── unit/                  # Mocked HTTP tests
+|│   └── conftest.py            # Shared fixtures
+|├── pyproject.toml
+|├── .forgejo/
+|│   └── workflows/
+|│       ├── ci.yml
+|│       └── release.yml
+|└── README.md
+|```
 
 ## Development
 
