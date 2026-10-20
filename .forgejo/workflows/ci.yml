@@ -11,19 +11,16 @@ jobs:
   lint:
     name: "Lint & type check"
     runs-on: runner
+    container:
+      image: catthehacker/ubuntu:act-24.04
     steps:
       - uses: actions/checkout@v4
       - name: "Python syntax check"
         run: |
-          echo "=== Python version ==="
           python3 --version
-          echo "=== Compileall (stdlib syntax check) ==="
           python3 -m compileall -q src/ tests/
-      - name: "Install lint dependencies"
+      - name: "Install lint tools"
         run: |
-          apt-get update -qq 2>/dev/null && apt-get install -y -qq \
-            python3-pip python3-hatchling 2>&1 || \
-            echo "[WARN] apt install failed"
           pip3 install --break-system-packages \
             ruff mypy types-requests 2>&1 || \
             echo "[WARN] pip install failed"
@@ -45,33 +42,14 @@ jobs:
   test:
     name: "Tests"
     runs-on: runner
+    container:
+      image: catthehacker/ubuntu:act-24.04
     needs: [lint]
     steps:
       - uses: actions/checkout@v4
-      - name: "Install test dependencies"
+      - name: "Install project with dev dependencies"
         run: |
-          # Runner uses node:22-bookworm Docker container. It has Python 3.11
-          # but not python3-pip or python3-venv. Install via apt first.
-          apt-get update -qq 2>/dev/null && apt-get install -y -qq python3-pip \
-            python3-hatchling python3-click python3-requests python3-pytest 2>&1 || \
-            echo "[WARN] apt install failed"
-          # Install test-only packages not available as Debian packages.
-          pip3 install --break-system-packages \
-            responses pytest-mock pytest-asyncio 2>&1 || \
-            echo "[WARN] pip install failed"
-      - name: "Install package"
-        run: |
-          if command -v pip3 >/dev/null 2>&1; then
-            pip3 install --break-system-packages -e . 2>&1
-          else
-            echo "[SKIP] pip not available"
-            exit 1
-          fi
+          pip3 install --break-system-packages -e ".[dev]" 2>&1
       - name: "Run unit tests"
         run: |
-          if python3 -c "import pytest, responses" 2>/dev/null; then
-            python3 -m pytest tests/unit/ -v --tb=short 2>&1
-          else
-            echo "[SKIP] missing dependencies"
-            exit 1
-          fi
+          python3 -m pytest tests/unit/ -v --tb=short 2>&1
